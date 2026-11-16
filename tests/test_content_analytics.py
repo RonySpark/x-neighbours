@@ -12,6 +12,7 @@ import content_analytics as ca
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES = os.path.join(ROOT, "tests", "fixtures", "analytics")
+API_FIXTURES = os.path.join(ROOT, "tests", "fixtures", "api")
 
 
 class LoadExportsTest(unittest.TestCase):
@@ -210,6 +211,7 @@ class ReportCliTest(unittest.TestCase):
         self.assertIn("Wednesday", text)
         self.assertIn("Is Tesla charging easier now?", text)
         self.assertIn("Huge random spike", text)
+        self.assertNotIn("Followers:", text)
         lines = [line for line in text.strip().splitlines() if line.strip()]
         self.assertGreaterEqual(len(lines), 8)
         self.assertLessEqual(len(lines), 22)
@@ -217,6 +219,89 @@ class ReportCliTest(unittest.TestCase):
             doc = json.load(fh)
         self.assertEqual(doc["consistency"]["streak"]["days"], 7)
         self.assertEqual(doc["scorecard"]["totals"]["impressions"]["this"], 9100)
+        self.assertNotIn("follower_share", doc)
+
+    def test_data_flag_adds_follower_share(self):
+        out = tempfile.mkdtemp(prefix="xn-what-worked-data-")
+        cmd = [
+            sys.executable, os.path.join(ROOT, "content_analytics.py"),
+            "--exports", FIXTURES, "--data", API_FIXTURES, "--out", out, "--json",
+        ]
+        result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(os.path.join(out, "what_worked_week.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("Followers: 40% of people who engaged (60% not), 30% of actions.", text)
+        self.assertIn("Likes 25%, reposts 50%, replies 25%.", text)
+        self.assertIn("1 non-follower engaged 2+ times (likely follow-back).", text)
+        with open(os.path.join(out, "what_worked_week.json"), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["follower_share"]["repeat_non_followers"], 1)
+
+
+class FollowerShareTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.report = ca.analyze(FIXTURES, data_dir=API_FIXTURES, me_id="100")
+        cls.share = cls.report["follower_share"]
+
+    def test_skipped_when_no_data_folder(self):
+        report = ca.analyze(FIXTURES)
+        self.assertNotIn("follower_share", report)
+        self.assertNotIn("Followers:", ca.render_markdown(report))
+
+    def test_owner_id_comes_from_posts_not_config_placeholder(self):
+        report = ca.analyze(FIXTURES, data_dir=API_FIXTURES, me_id="your_user_id")
+        self.assertEqual(report["follower_share"]["overall"]["people"]["total"], 5)
+
+    def test_overall_people_and_actions(self):
+        people = self.share["overall"]["people"]
+        actions = self.share["overall"]["actions"]
+        self.assertEqual(people["followers"], 2)
+        self.assertEqual(people["non_followers"], 3)
+        self.assertEqual(people["total"], 5)
+        self.assertAlmostEqual(people["follower_share"], 0.4)
+        self.assertEqual(actions["followers"], 3)
+        self.assertEqual(actions["non_followers"], 7)
+        self.assertEqual(actions["total"], 10)
+        self.assertAlmostEqual(actions["follower_share"], 0.3)
+
+    def test_split_by_likes_reposts_replies(self):
+        likes = self.share["likes"]
+        self.assertEqual(likes["people"]["followers"], 1)
+        self.assertEqual(likes["people"]["non_followers"], 2)
+        self.assertEqual(likes["actions"]["followers"], 1)
+        self.assertEqual(likes["actions"]["total"], 4)
+        reposts = self.share["reposts"]
+        self.assertEqual(reposts["people"]["followers"], 1)
+        self.assertEqual(reposts["people"]["non_followers"], 1)
+        self.assertEqual(reposts["actions"]["total"], 2)
+        replies = self.share["replies"]
+        self.assertEqual(replies["people"]["followers"], 1)
+        self.assertEqual(replies["people"]["non_followers"], 2)
+        self.assertEqual(replies["actions"]["followers"], 1)
+        self.assertEqual(replies["actions"]["total"], 4)
+
+    def test_excludes_last_week_and_non_replies(self):
+        neighbours = ca.load_neighbour_data(API_FIXTURES, "100")
+        self.assertIn("101", neighbours.likes["5003"])
+        likes = self.share["likes"]["actions"]["total"]
+        self.assertEqual(likes, 4)
+        replies = self.share["replies"]
+        self.assertEqual(replies["people"]["total"], 3)
+        self.assertEqual(self.share["repeat_non_followers"], 1)
+
+    def test_markdown_and_json_include_two_lines(self):
+        text = ca.render_markdown(self.report)
+        self.assertIn(
+            "Followers: 40% of people who engaged (60% not), 30% of actions. "
+            "Likes 25%, reposts 50%, replies 25%.",
+            text,
+        )
+        self.assertIn("1 non-follower engaged 2+ times (likely follow-back).", text)
+        payload = ca.json_ready(self.report)
+        self.assertEqual(payload["follower_share"]["repeat_non_followers"], 1)
+        self.assertEqual(payload["follower_share"]["likes"]["actions"]["total"], 4)
 
 
 if __name__ == "__main__":

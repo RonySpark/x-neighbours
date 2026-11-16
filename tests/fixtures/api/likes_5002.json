@@ -1,0 +1,8 @@
+{
+  "_comment": "FICTIONAL likers of post 5002.",
+  "data": [
+    {"id": "103", "username": "cam", "name": "Cam"},
+    {"id": "104", "username": "dot", "name": "Dot"}
+  ],
+  "meta": {"result_count": 2}
+}

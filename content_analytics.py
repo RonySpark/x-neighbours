@@ -6,7 +6,7 @@ not in the CSV; it is decoded from the Post id snowflake. Video exports are
 ignored.
 
 Usage:
-  python3 content_analytics.py --exports <dir> --out <dir> [--json]
+  python3 content_analytics.py --exports <dir> --out <dir> [--json] [--data <dir>]
 """
 import argparse
 import glob
@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -540,7 +541,116 @@ def consistency(overview, content):
     }
 
 
-def analyze(folder, keywords=None):
+def week_bounds(start, end):
+    """Inclusive UTC dates → [since, until) for Data._in_window."""
+    since = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
+    until = datetime(end.year, end.month, end.day, tzinfo=timezone.utc) + timedelta(days=1)
+    return since, until
+
+
+def infer_me_id(data_dir):
+    """Owner id from posts_*.json (get_users_posts for the connected account)."""
+    for _path, doc in xn.load(os.path.join(data_dir, "posts_*.json")):
+        for post in doc.get("data") or []:
+            if isinstance(post, dict) and post.get("author_id"):
+                return str(post["author_id"])
+    return None
+
+
+def load_me_id(config_path=None, data_dir=None):
+    if config_path:
+        with open(config_path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        if isinstance(cfg, dict) and cfg.get("user_id"):
+            return str(cfg["user_id"])
+    if data_dir:
+        return infer_me_id(data_dir)
+    return None
+
+
+def load_neighbour_data(data_dir, me_id=None):
+    """Reuse x_neighbours.Data. Omit data_dir to skip follower share."""
+    if not data_dir:
+        return None
+    if not os.path.isdir(data_dir):
+        raise SystemExit(f"data folder not found: {data_dir}")
+    me_id = infer_me_id(data_dir) or me_id
+    if not me_id:
+        return None
+    return xn.Data(data_dir, str(me_id))
+
+
+def _side_share(counts, followers):
+    people_f = people_n = 0
+    actions_f = actions_n = 0
+    for uid, n in counts.items():
+        if uid in followers:
+            people_f += 1
+            actions_f += n
+        else:
+            people_n += 1
+            actions_n += n
+    people = people_f + people_n
+    actions = actions_f + actions_n
+    return {
+        "people": {
+            "followers": people_f,
+            "non_followers": people_n,
+            "total": people,
+            "follower_share": ratio(people_f, people),
+        },
+        "actions": {
+            "followers": actions_f,
+            "non_followers": actions_n,
+            "total": actions,
+            "follower_share": ratio(actions_f, actions),
+        },
+    }
+
+
+def follower_share(data, start, end):
+    """Follower vs non-follower share of this week's likers, reposters, and repliers.
+
+    The follower set is the current `followers_*.json` snapshot that Data already
+    keeps (`get_users_me_followers`). Likes and reposts have no action time, so
+    they count on owner posts in the week, same as build_activity. Replies use
+    the mention timestamp and the same “reply to me” rule as Data.window.
+    """
+    since, until = week_bounds(start, end)
+    likes, reposts, replies = Counter(), Counter(), Counter()
+    me = data.me
+    for pid, post in data.posts.items():
+        if not data._in_window(post.get("created_at"), since, until):
+            continue
+        for uid in data.likes.get(pid, []):
+            if uid and uid != me:
+                likes[uid] += 1
+        for uid in data.reposts.get(pid, []):
+            if uid and uid != me:
+                reposts[uid] += 1
+    for mention in data.mentions:
+        uid = mention.get("author_id")
+        if not uid or uid == me:
+            continue
+        if not data._in_window(mention.get("created_at"), since, until):
+            continue
+        refs = [ref.get("id") for ref in xn.referenced(mention)
+                if ref.get("type") == "replied_to"]
+        if mention.get("in_reply_to_user_id") == me or any(ref in data.posts for ref in refs):
+            replies[uid] += 1
+    followers = data.followers
+    overall = likes + reposts + replies
+    repeat = sum(1 for uid, n in overall.items() if uid not in followers and n >= 2)
+    return {
+        "overall": _side_share(overall, followers),
+        "likes": _side_share(likes, followers),
+        "reposts": _side_share(reposts, followers),
+        "replies": _side_share(replies, followers),
+        "repeat_non_followers": repeat,
+    }
+
+
+def analyze(folder, keywords=None, data_dir=None, me_id=None):
     keywords = keywords or DEFAULT_KEYWORDS
     data = load_exports(folder)
     overview, content = data["overview"], data["content"]
@@ -548,7 +658,7 @@ def analyze(folder, keywords=None):
     start = datetime.fromisoformat(card["this_week"][0]).date()
     end = datetime.fromisoformat(card["this_week"][1]).date()
     this_posts = in_days(content, start, end)
-    return {
+    report = {
         "keywords": list(keywords),
         "scorecard": card,
         "types": content_types(this_posts, keywords),
@@ -556,6 +666,10 @@ def analyze(folder, keywords=None):
         "funnel": funnel(this_posts, keywords),
         "consistency": consistency(overview, content),
     }
+    neighbours = load_neighbour_data(data_dir, me_id)
+    if neighbours is not None:
+        report["follower_share"] = follower_share(neighbours, start, end)
+    return report
 
 
 def json_ready(value):
@@ -672,6 +786,26 @@ def render_markdown(report):
     lines.append(
         f"Streak: {streak['days']} Adelaide days in a row with an original post."
     )
+    share = report.get("follower_share")
+    if share and share["overall"]["people"]["total"]:
+        people = share["overall"]["people"]
+        actions = share["overall"]["actions"]
+        likes = share["likes"]["actions"]
+        reposts = share["reposts"]["actions"]
+        replies = share["replies"]["actions"]
+        lines.append(
+            f"Followers: {fmt_rate(people['follower_share'])} of people who engaged "
+            f"({fmt_rate(ratio(people['non_followers'], people['total']))} not), "
+            f"{fmt_rate(actions['follower_share'])} of actions. "
+            f"Likes {fmt_rate(likes['follower_share'])}, "
+            f"reposts {fmt_rate(reposts['follower_share'])}, "
+            f"replies {fmt_rate(replies['follower_share'])}."
+        )
+        repeat = share["repeat_non_followers"]
+        if repeat == 1:
+            lines.append("1 non-follower engaged 2+ times (likely follow-back).")
+        else:
+            lines.append(f"{repeat} non-followers engaged 2+ times.")
     lines.append("")
     if cons.get("do_more"):
         lines.append(f"Do more of this: {quoted(cons['do_more'])}.")
@@ -702,8 +836,12 @@ def main():
     parser.add_argument("--out", default=".", help="folder for what_worked_week.md")
     parser.add_argument("--json", action="store_true", help="also write what_worked_week.json")
     parser.add_argument("--config", help="optional config.json for keyword_tags")
+    parser.add_argument("--data", help="optional folder of saved X JSON; skip follower share if omitted")
     args = parser.parse_args()
-    report = analyze(args.exports, load_keywords(args.config))
+    report = analyze(
+        args.exports, load_keywords(args.config),
+        data_dir=args.data, me_id=load_me_id(args.config, args.data),
+    )
     paths = write_report(report, args.out, args.json)
     print(json.dumps(paths, ensure_ascii=False))
     return 0

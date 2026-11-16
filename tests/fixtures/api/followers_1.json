@@ -1,0 +1,8 @@
+{
+  "_comment": "FICTIONAL follower snapshot. Not real X data.",
+  "data": [
+    {"id": "101", "username": "ann", "name": "Ann"},
+    {"id": "102", "username": "ben", "name": "Ben"}
+  ],
+  "meta": {"result_count": 2}
+}

@@ -150,5 +150,32 @@ class PostingTimesTest(unittest.TestCase):
         self.assertNotIn("Thursday", self.times["best_weekday"]["weekday"])
 
 
+class FunnelTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _data, posts = this_week_posts()
+        cls.funnel = ca.funnel(posts)
+
+    def test_overall_rates_and_top_follows(self):
+        overall = self.funnel["overall"]
+        self.assertGreater(overall["impressions"], 0)
+        self.assertGreaterEqual(overall["expand_rate"], 0)
+        self.assertLessEqual(overall["expand_rate"], 1)
+        self.assertGreaterEqual(overall["visit_rate"], 0)
+        self.assertLessEqual(overall["visit_rate"], 1)
+        self.assertGreaterEqual(overall["follow_rate"], 0)
+        self.assertLessEqual(overall["follow_rate"], 1)
+        self.assertEqual(
+            self.funnel["top_follows"][0]["text"], "Should Tesla build in Adelaide?")
+        self.assertEqual(self.funnel["top_follows"][0]["new_follows"], 15)
+
+    def test_type_funnels_skip_small_types(self):
+        labels = [row["type"] for row in self.funnel["by_type"]]
+        self.assertNotIn("reply", labels)
+        tesla = next(row for row in self.funnel["by_type"] if row["type"] == "Tesla")
+        self.assertGreaterEqual(tesla["posts"], 3)
+        self.assertGreater(tesla["new_follows"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

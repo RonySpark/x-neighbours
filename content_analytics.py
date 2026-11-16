@@ -443,3 +443,63 @@ def posting_times(posts):
         "best_weekday": weekday_rows[0] if weekday_rows else None,
         "best_block": blocks[0] if blocks else None,
     }
+
+
+def ratio(num, den):
+    if not den:
+        return 0.0
+    return float(num) / float(den)
+
+
+def funnel_stats(posts):
+    if posts is None or posts.empty:
+        return {
+            "posts": 0,
+            "impressions": 0,
+            "detail_expands": 0,
+            "profile_visits": 0,
+            "new_follows": 0,
+            "expand_rate": 0.0,
+            "visit_rate": 0.0,
+            "follow_rate": 0.0,
+        }
+    impressions = int(posts["impressions"].sum())
+    expands = int(posts["detail_expands"].sum())
+    visits = int(posts["profile_visits"].sum())
+    follows = int(posts["new_follows"].sum())
+    return {
+        "posts": int(len(posts)),
+        "impressions": impressions,
+        "detail_expands": expands,
+        "profile_visits": visits,
+        "new_follows": follows,
+        "expand_rate": ratio(expands, impressions),
+        "visit_rate": ratio(visits, expands),
+        "follow_rate": ratio(follows, visits),
+    }
+
+
+def funnel(posts, keywords=None):
+    """Impressions → detail expands → profile visits → new follows."""
+    keywords = keywords or DEFAULT_KEYWORDS
+    if posts is None or posts.empty:
+        return {"overall": funnel_stats(posts), "by_type": [], "top_follows": []}
+    overall = funnel_stats(posts)
+    by_type = []
+    labels = set()
+    classified = []
+    for _, post in posts.iterrows():
+        tags = classify_post(post.get("text", ""), keywords)
+        classified.append(tags)
+        labels.update(tags)
+    for label in labels:
+        mask = [label in tags for tags in classified]
+        subset = posts[mask]
+        if len(subset) < MIN_TYPE_POSTS:
+            continue
+        stats = funnel_stats(subset)
+        stats["type"] = label
+        by_type.append(stats)
+    by_type.sort(key=lambda row: (-row["follow_rate"], -row["new_follows"], row["type"]))
+    top, _bottom = ranked_posts(posts, "new_follows")
+    return {"overall": overall, "by_type": by_type, "top_follows": top}

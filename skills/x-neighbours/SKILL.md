@@ -33,8 +33,8 @@ Then do the rest with the defaults. Do not ask setup questions.
 1. `get_users_me` with `user.fields=id,name,username,description,profile_image_url`. That is the account. Write `handle` and `user_id` into `config.json` copied from `config.example.json`. If you know their timezone, set `timezone` to an IANA name such as `Europe/Stockholm`. Leave `fresh_hours` unset unless they ask for a fixed interval. Leave every other key as in the example.
 2. Clone or `git pull --ff-only` this repo, install Pillow, and fetch only the last `first_run_days` from config (default **2 days**, 48 hours). Use the tool calls below with that `START`. Do not fetch a full week on the first run. Never commit `config.json` or `data/`.
 3. Run `python3 x_neighbours.py --now <T> --first-run --good-neighbours <path> --state <state path>`. Send the report as two messages, exactly as in “How to send a report”. Do not post the thank-you yourself. If stdout has `add_question`, send that one card after those two messages. Do not ask again in prose.
-4. Create both routines with no question: every day at 9:00 AM (last 24 hours, picture included), and Mondays at 9:00 AM (last 7 days, reusing daily files, picture included). Use their timezone, or UTC if you don't know it.
-5. Close with one line: daily and Monday reports are set; anything can be changed by asking (time, period, top N, likes only, replies only, per post, per day); say 'add @someone to my good neighbours' to keep up with them here.
+4. Create both routines with no question: every day at 9:00 AM (last 24 hours, picture included), and Mondays at 9:00 AM (last 7 days, reusing daily files, picture included). Use their timezone, or UTC if you don't know it. If they only want a weekly report, skip the daily routine and follow Weekly-only in Routines: one Monday job at 9:00 AM covering the last 7 days, fetching likers, reposters, and quoters for every post with that count above 0.
+5. Close with one line: daily and Monday reports are set (or only Monday, if weekly-only); anything can be changed by asking (time, period, top N, likes only, replies only, per post, per day); say 'add @someone to my good neighbours' to keep up with them here.
 
 Do not send a settings list.
 
@@ -94,8 +94,9 @@ A reply is a mention with `in_reply_to_user_id` equal to `{ID}`, or a `replied_t
 For each of the owner's posts in the fetched window:
 
 - Last 24 hours and `like_count` greater than 0: fetch likers.
-- Days 2–7 and `like_count` at least 3: fetch likers.
-- Otherwise skip the post. Most skips are short replies with one or two likes.
+- Days 2–7 and `like_count` at least 3: fetch likers. This assumes a daily run already covered day 1 with the >0 rule.
+- Weekly-only (no daily run that week): every post with `like_count` greater than 0. Do not use the 3-or-more skip; a weekly-only pass that skips 1–2 likes under-counts the week.
+- Otherwise skip the post. Most skips on a daily+Monday setup are short replies with one or two likes.
 
 `get_posts_liking_users`
 
@@ -109,7 +110,7 @@ Skip a post you already saved likers for earlier the same day.
 
 ### 4. Reposts and quote posts
 
-Same budget rule as likes, using `repost_count` and `quote_count` from the post's `public_metrics`. Last 24 hours: every post with that count above 0. Days 2–7: only counts of 3 or more. Skip a file you already saved.
+Same budget rule as likes, using `repost_count` and `quote_count` from the post's `public_metrics`. Last 24 hours: every post with that count above 0. Days 2–7 on a daily+Monday setup: only counts of 3 or more. Weekly-only: every post with that count above 0. Skip a file you already saved.
 
 `get_posts_reposted_by` — `id` the post id, `max_results` 100, `user.fields=username,name,description,public_metrics,profile_image_url`. Save as `reposts_<postid>`.
 
@@ -193,9 +194,11 @@ Profile photos are not drawn beside names in the chat. A message can include a g
 
 ## Routines
 
-Create both during the first run. Do not ask first. Tell the owner afterwards that they can change the time or turn either one off by asking.
+Create both during the first run unless they only want a weekly report. Do not ask first. Tell the owner afterwards that they can change the time or turn either one off by asking.
 
 Both run at 9:00 AM in the owner's timezone. Count every X call from both toward the same cap: about 30 a minute and 1,000 a day. On Monday, run the daily job first, then the weekly job, and do not fetch the last 24 hours twice.
+
+Weekly-only means there is no daily routine. One Monday job covers the last 7 days and must fetch likers, reposters, and quoters for every post with that count above 0. The days-2-to-7 “at least 3” skip is only safe when a daily run already fetched the 1–2 counts for recent posts.
 
 ### Every day
 
@@ -222,6 +225,21 @@ If today's `posts_day_1.json` is missing, do the daily run first.
 6. Send the report with “How to send a report”: message 1 is `report_week.md` with no image, message 2 is the thank-you text and link with `x_neighbours_week.png` in that message's `images` field. Do not post it. Do not send a report card unless they asked for `--report-card`. After those two messages, add one line and nothing else: “Anything you'd change about X Neighbours? Tell me and I'll turn it into a feedback link.” That line is `feedback_line` in the script output. Do not fetch anything for it.
 
 If the Monday calls would pass about 1,000 for the day, send the day picture you already have, fetch the older posts and mentions, and stop the liker lists when the cap is close. Tell the owner which older posts were left out.
+
+### Weekly-only
+
+Use this when there is no daily routine: the owner asked for weekly only, or only a Monday job exists. Do not also create a daily routine.
+
+1. `git pull --ff-only`. Leave `config.json` and `data/` uncommitted.
+2. Refresh followers and following if `data/followers_1.json` or `data/following_1.json` is missing or older than 7 days.
+3. Pick `T`. `START` is `T` minus 7 days.
+4. Fetch posts and mentions from `START`. Save as `posts_week_1`, … and `mentions_week_1`, ….
+5. Fetch likers, reposters, and quote posts for **every** post in that window whose `like_count`, `repost_count`, or `quote_count` is greater than 0. Do not skip counts of 1 or 2. Skip a file you already saved for the same post this week.
+6. If this week's `my_likes_1.json` or `my_posts_1.json` is missing, fetch those small pages (section 5). Then fetch latest posts (`latest_<userid>.json`) for each good neighbour, or for the ranked ten when the list is empty, and only if this week's file is missing.
+7. Run `python3 x_neighbours.py --now <T> --windows week --good-neighbours <path> --state <state path>`. Do not send the ⭐ Add card on this report.
+8. Send the report with “How to send a report”: message 1 is `report_week.md` with no image, message 2 is the thank-you text and link with `x_neighbours_week.png` in that message's `images` field. After those two messages, add the `feedback_line` as on Monday.
+
+A weekly-only run that uses the days-2-to-7 “at least 3” skip will miss most 1-like posts, most single reposts, and almost every quote. Stay on the >0 rule.
 
 ## Good neighbours
 
@@ -284,7 +302,7 @@ If `ask` is false, reply with one line that the last report is still fresh (`age
 
 If `ask` is true, send one yes/no question card with `question` and stop. Do not fetch, and do not send a report, until they answer. The usual question is “Your last report was 2 hours ago. Want a fresh one?”
 
-If they say no, stop. If they say yes, run a fresh report. `START` is `fetch_since` from that check (the end of the last report, or 24 hours ago when there is no report, and never more than 7 days). Pass it as `--since`. Use the same read budget as a daily run when the gap is under 24 hours, and the days-2-to-7 budget when it is longer. Then send the report with “How to send a report” and pass `--state` so the clock updates.
+If they say no, stop. If they say yes, run a fresh report. `START` is `fetch_since` from that check (the end of the last report, or 24 hours ago when there is no report, and never more than 7 days). Pass it as `--since`. Use the same read budget as a daily run when the gap is under 24 hours, and the days-2-to-7 budget when it is longer. On a weekly-only setup, use the >0 rule for the whole gap. Then send the report with “How to send a report” and pass `--state` so the clock updates.
 
 ```bash
 python3 x_neighbours.py --now <T> --since <fetch_since> --good-neighbours <path> --state <state path>

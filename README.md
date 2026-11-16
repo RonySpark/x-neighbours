@@ -144,7 +144,8 @@ Stay around **30 calls a minute** and **1,000 calls a day**. Send about 12 calls
 Likes, reposts, and quotes are one call per post:
 
 - The last 24 hours: every post with that count above 0.
-- Days 2–7: only counts of 3 or more.
+- Days 2–7, when a daily run already covered day 1: only counts of 3 or more.
+- Weekly-only (no daily run that week): every post with that count above 0. Do not use the 3-or-more skip.
 - Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty.
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.
 - One page is enough for almost every post. Fetch another page only while you are inside the day's budget.

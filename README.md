@@ -106,14 +106,18 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `keyword_tags` | Words used to group posts in content analytics. Default `Tesla` and `Adelaide` |
 | `fresh_hours` | Optional. How many hours until the bot may offer a new report. Omit it and the bot estimates: 1 hour at 60 or more interactions a day, 3 hours from 15 to 59, 8 hours under 15 |
 | `good_neighbours` | Optional path to the personal list. Prefer `--good-neighbours`, because the file lives outside the repo. A missing file is an empty list. At most 20 people |
+| `snapshot_dir` | Optional Echo daily snapshot folder. Prefer `--snapshot-dir`. Newest `YYYY-MM-DD.json` is the follower list. `following/YYYY-MM-DD.json` is who you follow. When the option is absent, `followers_*.json` and `following_*.json` stay in use |
 | `report` | `both` (default), `likes`, or `replies` |
 | `per_post`, `per_day` | Extra markdown sections. Off unless you ask |
 
-Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`, `--mutual-reply-bonus`, `--new-follower-bonus`.
+Other flags: `--config`, `--data`, `--snapshot-dir PATH`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`, `--mutual-reply-bonus`, `--new-follower-bonus`.
+
+`--snapshot-dir` reads Echo's daily folder (`/workspace/content/followers` on that machine). It picks the newest `YYYY-MM-DD.json` (a JSON list of users) and, when that file exists, `following/YYYY-MM-DD.json` (an id-to-user dict). Both are converted into the same `{data: [...]}` shape as `followers_*.json`. If `following/` is missing for that date, following stays empty. 👤? and mutuals then behave as they do with no `following_*.json`, and the report says so. Snapshot age uses the same "Followers (list from 16 Nov)" line as content analytics, including the stale warning after 7 days. The API follower pull is unchanged.
 
 A plain run writes the markdown report and the neighbours picture. `--first-run` uses `first_run_days`. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
 
 ```bash
+python3 x_neighbours.py --snapshot-dir /workspace/content/followers --now 2026-11-16T12:00:00Z
 python3 x_neighbours.py --now 2026-11-04T18:00:00Z --report likes
 python3 x_neighbours.py --now 2026-11-04T18:00:00Z --report replies
 python3 x_neighbours.py --now 2026-11-04T18:00:00Z --per-post
@@ -218,7 +222,7 @@ Saved JSON under `tests/fixtures/offline/` is enough. No X calls:
 python3 -m unittest discover -s tests -v
 ```
 
-`tests/test_offline_report.py` runs a week report end to end and checks that every output file is written (markdown, picture, `more.json`, thanks, `state.json`, `open_items.csv`) and that waiting replies are counted once per person. `tests/test_chat_format.py` checks the chat layout against `examples/few`. Content analytics uses fictional CSVs under `tests/fixtures/analytics/`.
+`tests/test_offline_report.py` runs a week report end to end and checks that every output file is written (markdown, picture, `more.json`, thanks, `state.json`, `open_items.csv`) and that waiting replies are counted once per person. `tests/test_chat_format.py` checks the chat layout against `examples/few`. Content analytics uses fictional CSVs under `tests/fixtures/analytics/`. Echo snapshot loading uses fictional files under `tests/fixtures/snapshot/`.
 
 ## Content analytics
 

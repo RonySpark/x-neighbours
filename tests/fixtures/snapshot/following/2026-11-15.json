@@ -1,0 +1,24 @@
+{
+  "901": {
+    "id": "901",
+    "username": "ada_vale",
+    "name": "Ada Vale",
+    "verified": true,
+    "verified_type": "blue",
+    "subscription_type": "Premium",
+    "public_metrics": {"followers_count": 52, "following_count": 10, "tweet_count": 5},
+    "created_at": "2019-03-01T00:00:00.000Z",
+    "description": "Fictional neighbour. Not a real account."
+  },
+  "904": {
+    "id": "904",
+    "username": "drew_holt",
+    "name": "Drew Holt",
+    "verified": false,
+    "verified_type": "",
+    "subscription_type": "",
+    "public_metrics": {"followers_count": 14, "following_count": 7, "tweet_count": 2},
+    "created_at": "2022-07-04T00:00:00.000Z",
+    "description": "Only in the newest following snapshot."
+  }
+}

@@ -15,9 +15,14 @@ It reads raw JSON saved from X tool calls (see README.md) in the data folder:
   followers_*.json     get_users_me_followers pages
   following_*.json     get_users_me_following pages
 
+  Or --snapshot-dir (config snapshot_dir): Echo's daily folder, newest date.
+  YYYY-MM-DD.json is a JSON list of follower user objects. following/YYYY-MM-DD.json
+  is an id-to-user dict. Missing following/ for that date leaves following empty.
+
 Usage:
   python3 x_neighbours.py --handle your_handle --user-id your_user_id
-                      [--data data] [--out .] [--now 2026-11-04T18:00:00Z]
+                      [--data data] [--snapshot-dir PATH] [--out .]
+                      [--now 2026-11-04T18:00:00Z]
                       [--rings 3] [--top 10]
                       [--report likes|replies|both] [--per-post] [--per-day]
                       [--good-neighbours PATH]
@@ -33,7 +38,7 @@ import sys
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 
@@ -60,6 +65,77 @@ def load_soft(pattern):
         if isinstance(doc, dict):
             out.append(doc)
     return out
+
+
+DATE_JSON = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
+SNAPSHOT_STALE_DAYS = 7
+
+
+def as_idset_doc(payload):
+    """Turn a JSON list or id-to-user dict into the {data: [...]} shape _idset reads."""
+    if isinstance(payload, list):
+        users = payload
+    elif isinstance(payload, dict):
+        users = [user for user in payload.values() if isinstance(user, dict)]
+    else:
+        users = []
+    return {"data": users}
+
+
+def newest_snapshot_date(folder):
+    dates = []
+    try:
+        names = os.listdir(folder)
+    except OSError as exc:
+        raise SystemExit(f"snapshot folder not readable: {folder} ({exc})") from exc
+    for name in names:
+        match = DATE_JSON.match(name)
+        if match and os.path.isfile(os.path.join(folder, name)):
+            dates.append(match.group(1))
+    if not dates:
+        raise SystemExit(f"no YYYY-MM-DD.json snapshots in {folder}")
+    return max(dates)
+
+
+def load_echo_snapshot(folder):
+    """Newest Echo daily snapshot as (date, followers_doc, following_doc or None)."""
+    day = newest_snapshot_date(folder)
+    followers_path = os.path.join(folder, f"{day}.json")
+    loaded = load(followers_path)
+    if not loaded:
+        raise SystemExit(f"no YYYY-MM-DD.json snapshots in {folder}")
+    _, payload = loaded[0]
+    if not isinstance(payload, list):
+        raise SystemExit(f"{followers_path} must be a JSON list of users")
+    following_path = os.path.join(folder, "following", f"{day}.json")
+    following_doc = None
+    if os.path.isfile(following_path):
+        _, following_payload = load(following_path)[0]
+        if not isinstance(following_payload, dict):
+            raise SystemExit(f"{following_path} must be a JSON object of id to user")
+        following_doc = as_idset_doc(following_payload)
+    return day, as_idset_doc(payload), following_doc
+
+
+def snapshot_age_days(snapshot_date, now):
+    day = date.fromisoformat(str(snapshot_date))
+    return (now.astimezone(timezone.utc).date() - day).days
+
+
+def snapshot_age_line(snapshot_date, now, following_missing=False):
+    """Same follower-list age wording as content_analytics, plus missing following."""
+    day = date.fromisoformat(str(snapshot_date))
+    stamp = f"{day.day} {day.strftime('%b')}"
+    line = f"Followers (list from {stamp})"
+    age = snapshot_age_days(snapshot_date, now)
+    if age > SNAPSHOT_STALE_DAYS:
+        line += f" (follower list is {age} days old, so refresh it for accurate numbers)"
+    if following_missing:
+        line += (
+            f". No following snapshot for {stamp}; "
+            "👤? and mutuals treat following as empty"
+        )
+    return line
 
 
 def ts(s):
@@ -133,9 +209,11 @@ def counted(n, singular, plural):
 
 
 class Data:
-    def __init__(self, data_dir, me_id):
+    def __init__(self, data_dir, me_id, snapshot_dir=None):
         self.data_dir = data_dir
         self.me = str(me_id)
+        self.snapshot_date = None
+        self.snapshot_following_missing = False
         self.users = {}
         self.posts = {}
         self.mentions = []
@@ -210,8 +288,18 @@ class Data:
         self._load_quotes()
         self._load_latest()
         self._load_engagement()
-        self.followers = self._idset("followers_*.json")
-        self.following = self._idset("following_*.json")
+        if snapshot_dir:
+            day, followers_doc, following_doc = load_echo_snapshot(snapshot_dir)
+            self.snapshot_date = day
+            self.followers = self._idset_from_docs([followers_doc])
+            if following_doc is None:
+                self.following = set()
+                self.snapshot_following_missing = True
+            else:
+                self.following = self._idset_from_docs([following_doc])
+        else:
+            self.followers = self._idset("followers_*.json")
+            self.following = self._idset("following_*.json")
 
     def _index_post(self, post):
         if not isinstance(post, dict):
@@ -383,9 +471,9 @@ class Data:
         for post in list(self.posts.values()) + self._my_posts:
             self._note_owner_reply(post)
 
-    def _idset(self, pattern):
+    def _idset_from_docs(self, docs):
         found = set()
-        for _, doc in load(os.path.join(self.data_dir, pattern)):
+        for doc in docs:
             for user in doc.get("data") or []:
                 user = self._prepare_user(user)
                 uid = user.get("id")
@@ -394,6 +482,10 @@ class Data:
                 found.add(uid)
                 self.users.setdefault(uid, user)
         return found
+
+    def _idset(self, pattern):
+        return self._idset_from_docs(
+            doc for _, doc in load(os.path.join(self.data_dir, pattern)))
 
     def relation(self, uid):
         follows_you = uid in self.followers
@@ -833,6 +925,7 @@ DEFAULTS = {
     "per_post": False,
     "per_day": False,
     "good_neighbours": None,
+    "snapshot_dir": None,
     "timezone": "",
     "fresh_hours": None,
     "state": None,
@@ -1458,7 +1551,7 @@ def public_greeting(row, now):
 
 
 def write_chat_report(activity, path, handle, since, now, label, top=10, items_per_user=3,
-                      show=CHAT_SHOW, window="day", waiting_rule=None):
+                      show=CHAT_SHOW, window="day", waiting_rule=None, snapshot_line=None):
     totals = activity["totals"]
     people = activity["threads"] + activity["interactions"] + activity["catch_up"]
     legend = []
@@ -1471,6 +1564,8 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     lines.append(hard_break(counts) if legend else counts)
     if legend:
         lines.append(" · ".join(legend))
+    if snapshot_line:
+        lines.append(snapshot_line)
     lines.append("")
     flowers = activity["interactions"]
     if not flowers:
@@ -1956,6 +2051,9 @@ def main():
     parser.add_argument("--handle")
     parser.add_argument("--user-id", dest="user_id")
     parser.add_argument("--data", default=os.path.join(here, "data"))
+    parser.add_argument(
+        "--snapshot-dir", dest="snapshot_dir",
+        help="Echo daily snapshot folder (YYYY-MM-DD.json followers, following/YYYY-MM-DD.json)")
     parser.add_argument("--out", default=here)
     parser.add_argument("--now", help="UTC ISO time the data was fetched (default: now)")
     parser.add_argument("--like-weight", dest="like_weight", type=float)
@@ -2036,6 +2134,9 @@ def main():
                      "Install it with: python3 -m pip install -r requirements.txt")
     if not os.path.isdir(args.data):
         parser.error(f"data folder not found: {args.data}")
+    snapshot_dir = cfg.get("snapshot_dir") or None
+    if snapshot_dir and not os.path.isdir(snapshot_dir):
+        parser.error(f"snapshot folder not found: {snapshot_dir}")
     os.makedirs(args.out, exist_ok=True)
     weights = resolve_weights(cfg)
     like_weight = weights["like_weight"]
@@ -2051,7 +2152,7 @@ def main():
     now = ts(args.now) if args.now else datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    data = Data(args.data, me_id)
+    data = Data(args.data, me_id, snapshot_dir=snapshot_dir)
     data.exclude = {handle.lower() for handle in cfg["exclude"]}
     neighbours = load_good_neighbours(cfg.get("good_neighbours"))
     me = {"id": me_id, "username": cfg["handle"]}
@@ -2115,10 +2216,15 @@ def main():
                 theme=cfg["theme"])
         thanks_path = os.path.join(args.out, f"report_{key}_thanks.md")
         more_path = os.path.join(args.out, f"report_{key}_more.json")
+        snapshot_line = None
+        if data.snapshot_date:
+            snapshot_line = snapshot_age_line(
+                data.snapshot_date, now,
+                following_missing=data.snapshot_following_missing)
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),
-            window=key, waiting_rule=waiting_rule)
+            window=key, waiting_rule=waiting_rule, snapshot_line=snapshot_line)
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
@@ -2198,6 +2304,12 @@ def main():
             output[key]["report_png"] = png_path
         if picture_path:
             output[key]["picture"] = picture_path
+        if data.snapshot_date:
+            output[key]["snapshot_date"] = data.snapshot_date
+            output[key]["follower_snapshot_age_days"] = snapshot_age_days(
+                data.snapshot_date, now)
+            if data.snapshot_following_missing:
+                output[key]["following_snapshot_missing"] = True
     print(json.dumps(output, ensure_ascii=False))
 
 

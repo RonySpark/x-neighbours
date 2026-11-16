@@ -427,15 +427,12 @@ def _time_slots(kept):
         pivot[name] = hours
     weekday = weekday_rows[0] if weekday_rows else None
     block = blocks[0] if blocks else None
-    sample = _slot_posts(kept, weekday, block)
-    if not sample:
-        sample = (block or weekday or {}).get("posts") or 0
     return {
         "kept": int(len(kept)),
         "pivot": pivot,
         "best_weekday": weekday,
         "best_block": block,
-        "sample_posts": sample,
+        "sample_posts": _slot_posts(kept, weekday, block),
     }
 
 
@@ -489,26 +486,38 @@ def posting_times(posts, keywords=None):
     }
 
 
-def best_time_phrase(times):
-    weekday = (times.get("best_weekday") or {}).get("weekday")
-    block = times.get("best_block") or {}
-    if not weekday and not block:
-        return None
-    if weekday and block:
-        body = f"{weekday} {block.get('label', '')} Adelaide"
-    elif weekday:
-        body = f"{weekday} Adelaide"
-    else:
-        body = f"{block.get('label', '')} Adelaide"
-    n = times.get("sample_posts")
-    if n is None:
-        n = block.get("posts") or (times.get("best_weekday") or {}).get("posts")
-    if not n:
-        return body
-    note = f"{n} posts"
+def _count_note(n):
+    word = "post" if n == 1 else "posts"
+    note = f"{n} {word}"
     if n < SMALL_SAMPLE:
         note += ", small sample"
-    return f"{body} ({note})"
+    return f"({note})"
+
+
+def best_time_phrase(times):
+    """Combine weekday and block only when their overlap meets the 3-post floor."""
+    weekday = times.get("best_weekday") or None
+    block = times.get("best_block") or None
+    if weekday and weekday.get("posts", 0) < MIN_TYPE_POSTS:
+        weekday = None
+    if block and block.get("posts", 0) < MIN_TYPE_POSTS:
+        block = None
+    if not weekday and not block:
+        return None
+    together = times.get("sample_posts") or 0
+    if weekday and block:
+        if together >= MIN_TYPE_POSTS:
+            return (
+                f"{weekday['weekday']} {block['label']} Adelaide {_count_note(together)}"
+            )
+        return (
+            f"{weekday['weekday']} {_count_note(weekday['posts'])} or "
+            f"{block['label']} {_count_note(block['posts'])}, "
+            "not enough posts in both to combine"
+        )
+    if weekday:
+        return f"{weekday['weekday']} Adelaide {_count_note(weekday['posts'])}"
+    return f"{block['label']} Adelaide {_count_note(block['posts'])}"
 
 
 def ratio(num, den):

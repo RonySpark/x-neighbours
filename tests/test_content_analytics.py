@@ -266,6 +266,46 @@ class PostingTimesTest(unittest.TestCase):
         self.assertNotIn("Long", by_line)
         self.assertNotIn("Link", by_line)
 
+    def test_separately_strong_weekday_and_block_are_not_combined(self):
+        long = "x" * 210
+        posts = _time_posts([
+            ("Tuesday", 8, 3000, long),
+            ("Tuesday", 10, 3000, long),
+            ("Tuesday", 16, 3000, long),
+            ("Tuesday", 19, 3000, long),
+            ("Tuesday", 13, 3000, long),
+            ("Friday", 13, 400, long),
+            ("Friday", 13, 400, long),
+            ("Friday", 14, 400, long),
+            ("Friday", 14, 400, long),
+        ])
+        times = ca.posting_times(posts)
+        self.assertEqual(times["best_weekday"]["weekday"], "Tuesday")
+        self.assertGreaterEqual(times["best_weekday"]["posts"], 4)
+        self.assertEqual(times["best_block"]["label"], "13:00-15:00")
+        self.assertGreaterEqual(times["best_block"]["posts"], 4)
+        self.assertEqual(times["sample_posts"], 1)
+        phrase = ca.best_time_phrase(times)
+        self.assertEqual(
+            phrase,
+            "Tuesday (5 posts) or 13:00-15:00 (5 posts), "
+            "not enough posts in both to combine",
+        )
+        self.assertNotIn("Tuesday 13:00-15:00", phrase)
+        self.assertNotIn("1 posts", phrase)
+        self.assertEqual(ca._count_note(1), "(1 post, small sample)")
+        by_type = {row["type"]: row for row in times["by_type"]}
+        self.assertIn("long", by_type)
+        self.assertEqual(by_type["long"]["sample_posts"], 1)
+        self.assertIn("or", ca.best_time_phrase(by_type["long"]))
+        text = ca.render_markdown(_times_report(times))
+        self.assertIn(
+            "Best time to post: Tuesday (5 posts) or 13:00-15:00 (5 posts), "
+            "not enough posts in both to combine.",
+            text,
+        )
+        self.assertIn("Long Tuesday (5 posts) or 13:00-15:00 (5 posts)", text)
+
 
 class FunnelTest(unittest.TestCase):
     @classmethod

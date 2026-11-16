@@ -143,6 +143,10 @@ class Data:
         self.originals = {}
         self.engaged = set()
         self.owner_replied_to = set()
+        self.owner_replied_in = set()
+        self._authors = {}
+        self._conversations = {}
+        self._my_posts = []
         self.likes_truncated = []
         for _, doc in load(os.path.join(data_dir, "posts_*.json")):
             for post in doc.get("data") or []:
@@ -152,6 +156,7 @@ class Data:
                 post["id"] = str(post["id"])
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
+                self._index_post(post)
                 if post.get("author_id", self.me) == self.me:
                     self.posts[post["id"]] = post
                     for ref in referenced(post):
@@ -172,6 +177,7 @@ class Data:
                     mention["author_id"] = str(mention["author_id"])
                 if mention.get("in_reply_to_user_id") is not None:
                     mention["in_reply_to_user_id"] = str(mention["in_reply_to_user_id"])
+                self._index_post(mention)
                 self.mentions.append(mention)
             self._users((doc.get("includes") or {}).get("users") or [])
         for path, doc in load(os.path.join(data_dir, "likes_*.json")):
@@ -198,6 +204,43 @@ class Data:
         self._load_engagement()
         self.followers = self._idset("followers_*.json")
         self.following = self._idset("following_*.json")
+
+    def _index_post(self, post):
+        if not isinstance(post, dict):
+            return
+        pid = str(post.get("id") or "")
+        if not pid:
+            return
+        if post.get("author_id") is not None:
+            self._authors[pid] = str(post["author_id"])
+        conv = post.get("conversation_id")
+        if conv:
+            self._conversations[pid] = str(conv)
+        elif is_original_post(post) and pid not in self._conversations:
+            self._conversations[pid] = pid
+
+    def _note_owner_reply(self, post):
+        if not isinstance(post, dict):
+            return
+        author = post.get("author_id")
+        if author is not None and str(author) != self.me:
+            return
+        reply_ids = [str(ref["id"]) for ref in referenced(post)
+                     if ref.get("type") == "replied_to" and ref.get("id")]
+        if not reply_ids and not post.get("in_reply_to_user_id"):
+            return
+        person = post.get("in_reply_to_user_id")
+        person = str(person) if person else None
+        conv = post.get("conversation_id")
+        conv = str(conv) if conv else None
+        for rid in reply_ids:
+            self.owner_replied_to.add(rid)
+            if not person:
+                person = self._authors.get(rid)
+            if not conv:
+                conv = self._conversations.get(rid) or rid
+        if conv and person and person != self.me:
+            self.owner_replied_in.add((conv, person))
 
     def _prepare_user(self, user):
         user = dict(user)
@@ -257,6 +300,7 @@ class Data:
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
                 post["_on_post"] = pid
+                self._index_post(post)
                 bucket.append(post)
                 have.add(post["id"])
 
@@ -316,11 +360,16 @@ class Data:
             self._add_owner_targets(post)
         for doc in load_soft(os.path.join(self.data_dir, "my_posts_*.json")):
             for post in doc.get("data") or []:
-                self._add_owner_targets(set_referenced(dict(post)))
+                post = set_referenced(dict(post))
+                self._index_post(post)
+                self._my_posts.append(post)
+                self._add_owner_targets(post)
         for doc in load_soft(os.path.join(self.data_dir, "my_likes_*.json")):
             for post in doc.get("data") or []:
                 if isinstance(post, dict) and post.get("id") is not None:
                     self.engaged.add(str(post["id"]))
+        for post in list(self.posts.values()) + self._my_posts:
+            self._note_owner_reply(post)
 
     def _idset(self, pattern):
         found = set()
@@ -859,6 +908,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             "on_id": on_id,
             "on_text": post_text(data, on_id) if on_id else "your post",
             "url": status_url(data, author, post["id"]),
+            "conversation_id": str(post.get("conversation_id") or on_id or post.get("id") or ""),
             "replied": post["id"] in data.owner_replied_to,
         })
 
@@ -1024,6 +1074,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         "has_good_neighbours": bool(good),
         "catch_hint": not good,
         "all_caught_up": not catch_up and bool(skipped_engaged),
+        "owner_replied_in": getattr(data, "owner_replied_in", set()),
     }
 
 
@@ -1206,11 +1257,23 @@ def catch_record(person):
     }
 
 
-def greeting_rows(threads):
-    unanswered, answered = [], []
+def greeting_rows(threads, owner_replied_in=None):
+    """One row per person per conversation. Waiting only if the owner has not
+    replied to that person in that conversation."""
+    owner_replied_in = owner_replied_in or set()
+    latest = {}
     for thread in threads:
+        uid = str(thread.get("id") or "")
         for item in thread["items"]:
             created = item.get("created_at")
+            if isinstance(created, str):
+                when = ts(created)
+            elif created:
+                when = created
+            else:
+                when = datetime.min.replace(tzinfo=timezone.utc)
+            conv = str(item.get("conversation_id") or item.get("on_id") or item.get("id") or "")
+            replied = (conv, uid) in owner_replied_in or bool(item.get("replied"))
             row = {
                 "name": thread["name"],
                 "username": thread["username"],
@@ -1220,12 +1283,22 @@ def greeting_rows(threads):
                 "text": snippet(item.get("text")) or "Post",
                 "url": item.get("url") or "",
                 "on_text": snippet(item.get("on_text") or ""),
-                "created_at": created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if created else "",
-                "replied": bool(item.get("replied")),
+                "created_at": utc_iso(created),
+                "replied": replied,
                 "avatar": avatar_url(thread),
-                "_when": created or datetime.min.replace(tzinfo=timezone.utc),
+                "_when": when,
             }
-            (answered if row["replied"] else unanswered).append(row)
+            key = (uid, conv)
+            prev = latest.get(key)
+            if prev is None or when >= prev["_when"]:
+                if prev and prev["replied"]:
+                    row["replied"] = True
+                latest[key] = row
+            elif replied:
+                prev["replied"] = True
+    unanswered, answered = [], []
+    for row in latest.values():
+        (answered if row["replied"] else unanswered).append(row)
     unanswered.sort(key=lambda row: row["_when"], reverse=True)
     answered.sort(key=lambda row: row["_when"], reverse=True)
     return unanswered, answered
@@ -1308,7 +1381,8 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
         if extra > 0:
             lines.append(f"+{extra} more in What's new. Ask to see them.")
             lines.append("")
-    unanswered, answered = greeting_rows(activity["threads"])
+    unanswered, answered = greeting_rows(
+        activity["threads"], activity.get("owner_replied_in"))
     if not unanswered and not answered:
         lines.append("No replies or quote posts in this stretch.")
     else:

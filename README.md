@@ -135,7 +135,7 @@ Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_twe
 | 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=10`, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts` | `latest_<userid>` |
 | 8 | `get_users_me_followers` and `get_users_me_following` | `max_results=1000`. Refresh on Mondays | `followers_1`, `following_1`, … |
 
-On a Grok Bot these tools are on the X connection. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.
+On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on the built-in public X tools. Likers, followers, following, liked posts, and bookmarks are on the owner's X plugin. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.
 
 ### Keeping the read count down
 

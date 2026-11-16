@@ -52,7 +52,7 @@ python3 save_raw.py <tool-result-file> <name>
 
 That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object both work. If you already have the JSON object, you may write `data/<name>.json` yourself.
 
-Call the tools by these names on the owner's X connection. Page with `pagination_token` set to the previous response's `meta.next_token`. Stop when there is no next token. A page can be shorter than `max_results`.
+Use the built-in public X tools for `get_users_posts`, `get_users_mentions`, `get_posts_reposted_by`, `get_posts_quoted_posts`, and `get_posts_by_ids`. Use the owner's X plugin for likers (`get_posts_liking_users`), followers and following, liked posts (`get_users_liked_posts`), and bookmarks. `get_users_me` and `get_users_by_username` stay on the owner's plugin. Page with `pagination_token` set to the previous response's `meta.next_token`. Stop when there is no next token. A page can be shorter than `max_results`.
 
 Request `referenced_posts` in `post.fields` (the expansion is also `referenced_posts`). Older dumps may say `referenced_tweets`. The script accepts both.
 

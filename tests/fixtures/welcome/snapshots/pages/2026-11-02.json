@@ -1,0 +1,21 @@
+[
+  {
+    "id": "999",
+    "username": "trap_page",
+    "name": "Trap Page",
+    "verified": true,
+    "verified_type": "blue",
+    "subscription_type": "Premium",
+    "created_at": "2024-01-01T00:00:00.000Z",
+    "description": "Must be ignored: this is a pages/ dump, not a daily snapshot.",
+    "profile_image_url": "https://example.invalid/trap.png",
+    "public_metrics": {
+      "followers_count": 9,
+      "following_count": 9,
+      "tweet_count": 1,
+      "like_count": 0,
+      "listed_count": 0,
+      "media_count": 0
+    }
+  }
+]

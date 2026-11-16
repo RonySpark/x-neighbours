@@ -79,7 +79,10 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 |---|---|
 | `handle` | Your X handle, without @ |
 | `user_id` | Your numeric X user id, stored as a string |
-| `like_weight`, `reply_weight` | Quiet points. A reply or quote uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
+| `like_weight`, `reply_weight` | Quiet points. A reply uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
+| `repost_weight`, `quote_weight` | Optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight` |
+| `mutual_reply_bonus` | Optional, default 0. Extra points for a reply on the owner's original post (not a reply or a repost) by a mutual follow |
+| `new_follower_bonus` | Optional, default 0. Extra points once for someone who follows the owner and is not followed back |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |
 | `first_run_days` | How many days the first fetch covers. Default 2. Daily stays 24 hours. Monday stays 7 days |
@@ -94,7 +97,7 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `report` | `both` (default), `likes`, or `replies` |
 | `per_post`, `per_day` | Extra markdown sections. Off unless you ask |
 
-Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`.
+Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`, `--mutual-reply-bonus`, `--new-follower-bonus`.
 
 A plain run writes the markdown report and the neighbours picture. `--first-run` uses `first_run_days`. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
 

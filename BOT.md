@@ -14,7 +14,7 @@ You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every ru
 - Stay on this task. Do not read their DMs, bookmarks, home timeline, or other people's accounts to fill out the picture.
 - If the X tools are missing, ask the owner to connect X in this chat. Do not ask for a password, API key, or bearer token, and do not open x.com to log them in.
 
-Weights are a quiet setting. The meaning of `like_weight` and `reply_weight` lives only in the config section of [README.md](README.md). Do not ask about them before the first picture. Do not repeat the numbers on the picture, in report headings, or in the summary you send.
+Weights are a quiet setting. The meaning of `like_weight`, `reply_weight`, and the optional weight keys lives only in the config section of [README.md](README.md). Do not ask about them before the first picture. Do not repeat the numbers on the picture, in report headings, or in the summary you send.
 
 ## First run
 
@@ -47,6 +47,8 @@ That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object
 Use the built-in public X tools for `get_users_posts`, `get_users_mentions`, `get_posts_reposted_by`, `get_posts_quoted_posts`, and `get_posts_by_ids`. Use the owner's X plugin for likers (`get_posts_liking_users`), followers and following, liked posts (`get_users_liked_posts`), and bookmarks. `get_users_me` and `get_users_by_username` stay on the owner's plugin. Page with `pagination_token` set to the previous response's `meta.next_token`. Keep paging while `meta.next_token` is present. Some tools cap a page at 25 even when `max_results` is 100; a short page is not the end of the list. Stop only when there is no next token, or the day's budget is gone.
 
 Request `referenced_posts` in `post.fields` (the expansion is also `referenced_posts`). Older dumps may say `referenced_tweets`. The script accepts both.
+
+When the tool allows it, add `connection_status` to `user.fields` so mutual-follow and new-follower scoring can use it.
 
 `{ID}` is the owner's user id from config.
 
@@ -120,7 +122,7 @@ Those files, plus replies already in `posts_*.json`, are how Catch up hides a po
 
 ### 6. Latest post for the catch-up list
 
-Read the good neighbours file first (see Good neighbours). If it lists people, fetch a latest page for each of them, at most 20, and do not also fetch the ranked ten. If the file is missing or the list is empty, pick at most 10 people with the highest quiet score in config (replies and quotes use `reply_weight`, likes use `like_weight`; do not tell the owner the numbers). For each person, one call:
+Read the good neighbours file first (see Good neighbours). If it lists people, fetch a latest page for each of them, at most 20, and do not also fetch the ranked ten. If the file is missing or the list is empty, pick at most 10 people with the highest quiet score in config (do not tell the owner the numbers). For each person, one call:
 
 `get_users_posts` — `id` their user id, `max_results` 10, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts`, `expansions=author_id`, `user.fields=username,name,profile_image_url`.
 

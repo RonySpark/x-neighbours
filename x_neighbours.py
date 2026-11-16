@@ -386,6 +386,15 @@ class Data:
     def relation(self, uid):
         follows_you = uid in self.followers
         you_follow = uid in self.following
+        status = (self.users.get(uid) or {}).get("connection_status")
+        if status:
+            if isinstance(status, str):
+                status = [status]
+            flags = {str(item).lower().replace("-", "_").replace(" ", "_") for item in status}
+            if "followed_by" in flags:
+                follows_you = True
+            if "following" in flags:
+                you_follow = True
         if follows_you and you_follow:
             return "mutual"
         if follows_you:
@@ -468,17 +477,23 @@ def link(user):
     return f"[@{handle}](https://x.com/{handle})"
 
 
-def score(likes, replies, like_weight, reply_weight):
-    ranked = Counter()
-    people = set(likes) | set(replies)
-    order = sorted(people, key=lambda uid: (
-        -(likes[uid] * like_weight + replies[uid] * reply_weight),
-        -replies[uid],
-        uid,
-    ))
-    for uid in order:
-        ranked[uid] = likes[uid] * like_weight + replies[uid] * reply_weight
-    return ranked
+def optional_weight(value, fallback):
+    if value is None or value == "":
+        return fallback
+    return whole_number(value)
+
+
+def resolve_weights(cfg):
+    like_weight = whole_number(cfg.get("like_weight", 1))
+    reply_weight = whole_number(cfg.get("reply_weight", 3))
+    return {
+        "like_weight": like_weight,
+        "reply_weight": reply_weight,
+        "repost_weight": optional_weight(cfg.get("repost_weight"), like_weight),
+        "quote_weight": optional_weight(cfg.get("quote_weight"), reply_weight),
+        "mutual_reply_bonus": optional_weight(cfg.get("mutual_reply_bonus"), 0),
+        "new_follower_bonus": optional_weight(cfg.get("new_follower_bonus"), 0),
+    }
 
 
 def active_counts(likes, replies, report):
@@ -782,6 +797,10 @@ DEFAULTS = {
     "user_id": None,
     "like_weight": 1,
     "reply_weight": 3,
+    "repost_weight": None,
+    "quote_weight": None,
+    "mutual_reply_bonus": 0,
+    "new_follower_bonus": 0,
     "exclude": ["grok"],
     "rings": 3,
     "show_names": True,
@@ -888,7 +907,12 @@ def is_good_neighbour(uid, username, ids, names):
 
 
 def build_activity(data, since, until, top, like_weight, reply_weight, mode, now,
-                   good_neighbours=None):
+                   good_neighbours=None, repost_weight=None, quote_weight=None,
+                   mutual_reply_bonus=0, new_follower_bonus=0):
+    if repost_weight is None:
+        repost_weight = like_weight
+    if quote_weight is None:
+        quote_weight = reply_weight
     items = []
     seen = set()
 
@@ -931,6 +955,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
 
     likes_c, reposts_c = Counter(), Counter()
     reply_c, quote_c = Counter(), Counter()
+    mutual_reply_c = Counter()
     for pid, post in data.posts.items():
         if not data._in_window(post.get("created_at"), since, until):
             continue
@@ -942,17 +967,29 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
                 reposts_c[uid] += 1
     for item in items:
         (quote_c if item["kind"] == "quote" else reply_c)[item["author_id"]] += 1
+        if item["kind"] != "reply":
+            continue
+        on_post = data.posts.get(item.get("on_id")) if item.get("on_id") else None
+        if on_post and is_original_post(on_post) and data.relation(item["author_id"]) == "mutual":
+            mutual_reply_c[item["author_id"]] += 1
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
         reposts = reposts_c[uid] if which != "replies" else 0
         replies = reply_c[uid] if which != "likes" else 0
         quotes = quote_c[uid] if which != "likes" else 0
+        mutual_replies = mutual_reply_c[uid] if which != "likes" else 0
+        follower_bonus = new_follower_bonus if data.relation(uid) == "follows-you" else 0
         if which == "likes":
-            replies = quotes = 0
+            replies = quotes = mutual_replies = 0
         if which == "replies":
             likes = reposts = 0
-        return (likes + reposts) * like_weight + (replies + quotes) * reply_weight
+        return (likes * like_weight
+                + reposts * repost_weight
+                + replies * reply_weight
+                + quotes * quote_weight
+                + mutual_replies * mutual_reply_bonus
+                + follower_bonus)
 
     good = good_neighbours or []
     good_ids, good_names = good_neighbour_ids(good)
@@ -1697,12 +1734,18 @@ def thank_you_post(when, zone):
     return text, "https://x.com/intent/post?text=" + urllib.parse.quote(text)
 
 
-def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per_post, per_day):
+def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per_post, per_day,
+                   repost_weight=None, quote_weight=None, mutual_reply_bonus=0,
+                   new_follower_bonus=0):
     lines = []
     if per_day:
         lines += ["### Per day", ""]
         for day, day_start, day_end in each_utc_day(since, now):
-            activity = build_activity(data, day_start, day_end, top, like_weight, reply_weight, "both", now)
+            activity = build_activity(
+                data, day_start, day_end, top, like_weight, reply_weight, "both", now,
+                repost_weight=repost_weight, quote_weight=quote_weight,
+                mutual_reply_bonus=mutual_reply_bonus,
+                new_follower_bonus=new_follower_bonus)
             totals = activity["totals"]
             lines.append(
                 f"- **{day.isoformat()}** — {totals['replies']} replies, {totals['quotes']} quotes, "
@@ -1743,6 +1786,10 @@ def main():
     parser.add_argument("--now", help="UTC ISO time the data was fetched (default: now)")
     parser.add_argument("--like-weight", dest="like_weight", type=float)
     parser.add_argument("--reply-weight", dest="reply_weight", type=float)
+    parser.add_argument("--repost-weight", dest="repost_weight", type=float)
+    parser.add_argument("--quote-weight", dest="quote_weight", type=float)
+    parser.add_argument("--mutual-reply-bonus", dest="mutual_reply_bonus", type=float)
+    parser.add_argument("--new-follower-bonus", dest="new_follower_bonus", type=float)
     parser.add_argument("--exclude", help="comma-separated handles to drop; '' for none")
     parser.add_argument("--rings", type=int)
     parser.add_argument("--top", type=int)
@@ -1816,8 +1863,13 @@ def main():
     if not os.path.isdir(args.data):
         parser.error(f"data folder not found: {args.data}")
     os.makedirs(args.out, exist_ok=True)
-    like_weight = whole_number(cfg["like_weight"])
-    reply_weight = whole_number(cfg["reply_weight"])
+    weights = resolve_weights(cfg)
+    like_weight = weights["like_weight"]
+    reply_weight = weights["reply_weight"]
+    repost_weight = weights["repost_weight"]
+    quote_weight = weights["quote_weight"]
+    mutual_reply_bonus = weights["mutual_reply_bonus"]
+    new_follower_bonus = weights["new_follower_bonus"]
     me_id = str(cfg["user_id"])
     now = ts(args.now) if args.now else datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -1861,7 +1913,9 @@ def main():
         since = span if isinstance(span, datetime) else now - timedelta(days=span)
         activity = build_activity(
             data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
-            good_neighbours=neighbours)
+            good_neighbours=neighbours, repost_weight=repost_weight,
+            quote_weight=quote_weight, mutual_reply_bonus=mutual_reply_bonus,
+            new_follower_bonus=new_follower_bonus)
         md_path = os.path.join(args.out, f"report_{key}.md")
         png_path = os.path.join(args.out, f"report_{key}.png")
         text, intent = thank_you_post(now, zone)
@@ -1897,7 +1951,10 @@ def main():
             with open(md_path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + extra_sections(
                     data, since, now, cfg["handle"], cfg["top"], like_weight, reply_weight,
-                    cfg["per_post"], cfg["per_day"]) + "\n")
+                    cfg["per_post"], cfg["per_day"],
+                    repost_weight=repost_weight, quote_weight=quote_weight,
+                    mutual_reply_bonus=mutual_reply_bonus,
+                    new_follower_bonus=new_follower_bonus) + "\n")
         if args.report_card and not args.no_image:
             render_report(
                 activity, png_path, cfg["handle"], since, now, label,

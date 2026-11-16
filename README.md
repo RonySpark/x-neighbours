@@ -120,7 +120,7 @@ python3 save_raw.py <tool-result-file> <name>
 
 Pick a UTC timestamp `T` when you start. Pass `T` to the script as `--now`. For a week (or for both windows), `start_time` is `T` minus 7 days, for example `T` = `2026-11-04T18:00:00Z` and `start_time` = `2026-10-28T18:00:00Z`. For a day-only run, `start_time` is `T` minus 24 hours. One fetch feeds every window you render: the script cuts the 24-hour window out of the same files.
 
-`{ID}` is your user id. Page with `pagination_token` set to the previous `meta.next_token`, and stop when there is no next token. Pages can be shorter than `max_results`.
+`{ID}` is your user id. Always pass `max_results` 100 for posts, mentions, and likers; do not omit it (the tool then pages at 25). Page with `pagination_token` set to the previous `meta.next_token`. Keep paging while `next_token` is present — a short page is not the end of the list. For mentions, keep calling until there is no `next_token`.
 
 | # | Tool | Arguments | Save as |
 |---|---|---|---|

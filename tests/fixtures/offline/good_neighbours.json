@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "neighbours": [
+    {"id": "201", "username": "waitalot", "name": "Pat Wait", "added": "2026-11-01"},
+    {"id": "202", "username": "postsonly", "name": "Quinn Posts", "added": "2026-11-01"},
+    {"id": "203", "username": "backforth", "name": "Riley Back", "added": "2026-11-01"},
+    {"id": "204", "username": "neighbour4", "name": "Four Glen", "added": "2026-11-01"},
+    {"id": "205", "username": "neighbour5", "name": "Five Glen", "added": "2026-11-01"},
+    {"id": "206", "username": "neighbour6", "name": "Six Glen", "added": "2026-11-01"}
+  ]
+}

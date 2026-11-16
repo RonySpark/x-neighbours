@@ -2,11 +2,12 @@
 """Behaviour tests for X Analytics CSV exports. Fixtures are fictional."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import date, timezone
+from datetime import date, datetime, timezone
 
 import content_analytics as ca
 
@@ -231,12 +232,17 @@ class ReportCliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with open(os.path.join(out, "what_worked_week.md"), encoding="utf-8") as fh:
             text = fh.read()
-        self.assertIn("Followers: 40% of people who engaged (60% not), 30% of actions.", text)
+        self.assertIn(
+            "Followers (list from 16 Nov): 40% of people who engaged (60% not), 30% of actions.",
+            text,
+        )
         self.assertIn("Likes 25%, reposts 50%, replies 25%.", text)
+        self.assertNotIn("follower list is", text)
         self.assertIn("1 non-follower engaged 2+ times (likely follow-back).", text)
         with open(os.path.join(out, "what_worked_week.json"), encoding="utf-8") as fh:
             doc = json.load(fh)
         self.assertEqual(doc["follower_share"]["repeat_non_followers"], 1)
+        self.assertEqual(doc["follower_share"]["follower_snapshot_age_days"], 0)
 
 
 class FollowerShareTest(unittest.TestCase):
@@ -294,14 +300,63 @@ class FollowerShareTest(unittest.TestCase):
     def test_markdown_and_json_include_two_lines(self):
         text = ca.render_markdown(self.report)
         self.assertIn(
-            "Followers: 40% of people who engaged (60% not), 30% of actions. "
+            "Followers (list from 16 Nov): 40% of people who engaged (60% not), 30% of actions. "
             "Likes 25%, reposts 50%, replies 25%.",
             text,
         )
+        self.assertNotIn("follower list is", text)
         self.assertIn("1 non-follower engaged 2+ times (likely follow-back).", text)
         payload = ca.json_ready(self.report)
         self.assertEqual(payload["follower_share"]["repeat_non_followers"], 1)
         self.assertEqual(payload["follower_share"]["likes"]["actions"]["total"], 4)
+        self.assertEqual(payload["follower_share"]["snapshot_date"], "2026-11-16")
+        self.assertEqual(payload["follower_share"]["follower_snapshot_age_days"], 0)
+
+    def test_fresh_mtime_has_date_and_no_warning(self):
+        folder = _api_copy(fetched_at=None, mtime=datetime(2026, 11, 16, 12, tzinfo=timezone.utc))
+        report = ca.analyze(FIXTURES, data_dir=folder, me_id="100")
+        share = report["follower_share"]
+        self.assertEqual(share["snapshot_date"], "2026-11-16")
+        self.assertEqual(share["follower_snapshot_age_days"], 0)
+        text = ca.render_markdown(report)
+        self.assertIn("Followers (list from 16 Nov):", text)
+        self.assertNotIn("follower list is", text)
+
+    def test_stale_snapshot_warns_and_sets_age_days(self):
+        folder = _api_copy(fetched_at="2026-11-01T09:00:00Z")
+        report = ca.analyze(FIXTURES, data_dir=folder, me_id="100")
+        share = report["follower_share"]
+        self.assertEqual(share["snapshot_date"], "2026-11-01")
+        self.assertEqual(share["follower_snapshot_age_days"], 15)
+        text = ca.render_markdown(report)
+        self.assertIn("Followers (list from 1 Nov):", text)
+        self.assertIn(
+            "(follower list is 15 days old, so refresh it for accurate numbers)",
+            text,
+        )
+
+
+def _api_copy(fetched_at=False, mtime=None):
+    """Copy the API fixtures. fetched_at=None strips the saved time; a string sets it."""
+    dest = tempfile.mkdtemp(prefix="xn-api-")
+    for name in os.listdir(API_FIXTURES):
+        src = os.path.join(API_FIXTURES, name)
+        dst = os.path.join(dest, name)
+        if name.startswith("followers_") and fetched_at is not False:
+            with open(src, encoding="utf-8") as fh:
+                doc = json.load(fh)
+            if fetched_at is None:
+                doc.pop("fetched_at", None)
+            else:
+                doc["fetched_at"] = fetched_at
+            with open(dst, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+        else:
+            shutil.copy(src, dst)
+        if mtime is not None and name.startswith("followers_"):
+            epoch = mtime.timestamp()
+            os.utime(dst, (epoch, epoch))
+    return dest
 
 
 if __name__ == "__main__":

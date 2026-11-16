@@ -15,7 +15,7 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -28,6 +28,7 @@ ADELAIDE = ZoneInfo("Australia/Adelaide")
 DEFAULT_KEYWORDS = ["Tesla", "Adelaide"]
 MIN_TYPE_POSTS = 3
 SHORT_MAX = 80
+SNAPSHOT_STALE_DAYS = 7
 MEDIUM_MAX = 200
 
 CONTENT_COLUMNS = {
@@ -580,6 +581,43 @@ def load_neighbour_data(data_dir, me_id=None):
     return xn.Data(data_dir, str(me_id))
 
 
+def timestamp_in_followers_doc(doc):
+    """Prefer a saved fetch time on the file or its meta, if one exists."""
+    if not isinstance(doc, dict):
+        return None
+    sources = [doc]
+    meta = doc.get("meta")
+    if isinstance(meta, dict):
+        sources.append(meta)
+    for source in sources:
+        for key in ("fetched_at", "as_of", "saved_at"):
+            value = source.get(key)
+            if not value:
+                continue
+            try:
+                return xn.ts(value)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def follower_snapshot_time(data_dir):
+    """Newest followers_*.json: timestamp inside the file, else mtime."""
+    paths = glob.glob(os.path.join(data_dir, "followers_*.json"))
+    if not paths:
+        return None
+    newest = max(paths, key=os.path.getmtime)
+    try:
+        with open(newest, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        doc = None
+    inside = timestamp_in_followers_doc(doc) if doc else None
+    if inside is not None:
+        return inside
+    return datetime.fromtimestamp(os.path.getmtime(newest), tz=timezone.utc)
+
+
 def _side_share(counts, followers):
     people_f = people_n = 0
     actions_f = actions_n = 0
@@ -641,12 +679,17 @@ def follower_share(data, start, end):
     followers = data.followers
     overall = likes + reposts + replies
     repeat = sum(1 for uid, n in overall.items() if uid not in followers and n >= 2)
+    when = follower_snapshot_time(data.data_dir)
+    snap_date = when.astimezone(timezone.utc).date() if when else None
+    age = (end - snap_date).days if snap_date else None
     return {
         "overall": _side_share(overall, followers),
         "likes": _side_share(likes, followers),
         "reposts": _side_share(reposts, followers),
         "replies": _side_share(replies, followers),
         "repeat_non_followers": repeat,
+        "snapshot_date": snap_date.isoformat() if snap_date else None,
+        "follower_snapshot_age_days": age,
     }
 
 
@@ -793,14 +836,24 @@ def render_markdown(report):
         likes = share["likes"]["actions"]
         reposts = share["reposts"]["actions"]
         replies = share["replies"]["actions"]
-        lines.append(
-            f"Followers: {fmt_rate(people['follower_share'])} of people who engaged "
+        label = "Followers"
+        if share.get("snapshot_date"):
+            day = date.fromisoformat(share["snapshot_date"])
+            label = f"Followers (list from {day.day} {day.strftime('%b')})"
+        line = (
+            f"{label}: {fmt_rate(people['follower_share'])} of people who engaged "
             f"({fmt_rate(ratio(people['non_followers'], people['total']))} not), "
             f"{fmt_rate(actions['follower_share'])} of actions. "
             f"Likes {fmt_rate(likes['follower_share'])}, "
             f"reposts {fmt_rate(reposts['follower_share'])}, "
             f"replies {fmt_rate(replies['follower_share'])}."
         )
+        age = share.get("follower_snapshot_age_days")
+        if age is not None and age > SNAPSHOT_STALE_DAYS:
+            line += (
+                f" (follower list is {age} days old, so refresh it for accurate numbers)"
+            )
+        lines.append(line)
         repeat = share["repeat_non_followers"]
         if repeat == 1:
             lines.append("1 non-follower engaged 2+ times (likely follow-back).")

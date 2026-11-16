@@ -12,12 +12,15 @@ It reads raw JSON saved from X tool calls (see README.md) in the data folder:
   latest_<userid>.json get_users_posts for one neighbour (their latest posts)
   my_likes_*.json      get_users_liked_posts (posts the owner already liked)
   my_posts_*.json      get_users_posts for the owner, including replies and reposts
-  followers_*.json     get_users_me_followers pages
-  following_*.json     get_users_me_following pages
 
-  Or --snapshot-dir (config snapshot_dir): Echo's daily folder, newest date.
-  YYYY-MM-DD.json is a JSON list of follower user objects. following/YYYY-MM-DD.json
-  is an id-to-user dict. Missing following/ for that date leaves following empty.
+  Followers and following come from Echo's daily snapshot (--snapshot-dir /
+  config snapshot_dir). Newest YYYY-MM-DD.json is a JSON list of follower
+  user objects. following/YYYY-MM-DD.json is an id-to-user dict. Missing
+  following/ for that date leaves following empty.
+
+  When --snapshot-dir is absent, the offline fallback is:
+  followers_*.json     saved follower pages
+  following_*.json     saved following pages
 
 Usage:
   python3 x_neighbours.py --handle your_handle --user-id your_user_id

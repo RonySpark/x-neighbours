@@ -200,5 +200,137 @@ class PeriodLabelTest(unittest.TestCase):
         self.assertNotIn("Nov", xn.period_line("fresh", start, shifted, ""))
 
 
+class WaitingConversationTest(unittest.TestCase):
+    def _thread(self, uid, name, username, items):
+        return {
+            "id": uid,
+            "name": name,
+            "username": username,
+            "items": items,
+        }
+
+    def _item(self, pid, when, conv, on_id, replied=False):
+        return {
+            "id": pid,
+            "kind": "reply",
+            "text": f"note {pid}",
+            "url": f"https://x.com/ada_brook/status/{pid}",
+            "on_id": on_id,
+            "on_text": "your post",
+            "created_at": xn.ts(when),
+            "conversation_id": conv,
+            "replied": replied,
+        }
+
+    def test_follow_up_in_answered_thread_is_not_waiting(self):
+        thread = self._thread("800101", "Ada Brook", "ada_brook", [
+            self._item("71001", "2026-11-04T10:00:00Z", "70001", "70001", replied=True),
+            self._item("71003", "2026-11-04T12:00:00Z", "70001", "89001", replied=False),
+        ])
+        unanswered, answered = xn.greeting_rows([thread], {("70001", "800101")})
+        self.assertEqual(unanswered, [])
+        self.assertEqual(len(answered), 1)
+        self.assertEqual(answered[0]["url"], "https://x.com/ada_brook/status/71003")
+        self.assertTrue(answered[0]["replied"])
+
+    def test_waiting_is_once_per_person_per_conversation(self):
+        thread = self._thread("800103", "Cleo Dawn", "cleo_dawn", [
+            self._item("71002", "2026-11-04T11:30:00Z", "70002", "70002"),
+            self._item("71004", "2026-11-04T13:00:00Z", "70002", "70002"),
+        ])
+        unanswered, answered = xn.greeting_rows([thread], set())
+        self.assertEqual(answered, [])
+        self.assertEqual(len(unanswered), 1)
+        self.assertEqual(unanswered[0]["url"], "https://x.com/ada_brook/status/71004")
+        self.assertFalse(unanswered[0]["replied"])
+
+    def test_two_conversations_stay_separate(self):
+        thread = self._thread("800101", "Ada Brook", "ada_brook", [
+            self._item("71001", "2026-11-04T10:00:00Z", "70001", "70001", replied=True),
+            self._item("71005", "2026-11-04T11:00:00Z", "70002", "70002", replied=False),
+        ])
+        unanswered, answered = xn.greeting_rows([thread], {("70001", "800101")})
+        self.assertEqual(len(answered), 1)
+        self.assertEqual(len(unanswered), 1)
+        self.assertEqual(unanswered[0]["url"], "https://x.com/ada_brook/status/71005")
+
+    def test_owner_reply_in_conversation_marks_mentions_answered(self):
+        folder = tempfile.mkdtemp(prefix="xn-wait-")
+        with open(os.path.join(folder, "posts_1.json"), "w", encoding="utf-8") as fh:
+            json.dump({"data": [
+                {"id": "1", "author_id": "me", "created_at": "2026-11-04T09:00:00Z", "text": "hi"},
+                {"id": "3", "author_id": "me", "created_at": "2026-11-04T11:00:00Z",
+                 "text": "thanks",
+                 "referenced_tweets": [{"type": "replied_to", "id": "2"}]},
+            ]}, fh)
+        with open(os.path.join(folder, "mentions_1.json"), "w", encoding="utf-8") as fh:
+            json.dump({"data": [
+                {"id": "2", "author_id": "u1", "created_at": "2026-11-04T10:00:00Z",
+                 "text": "first", "in_reply_to_user_id": "me",
+                 "referenced_tweets": [{"type": "replied_to", "id": "1"}],
+                 "conversation_id": "1"},
+                {"id": "4", "author_id": "u1", "created_at": "2026-11-04T12:00:00Z",
+                 "text": "follow-up", "in_reply_to_user_id": "me",
+                 "referenced_tweets": [{"type": "replied_to", "id": "3"}],
+                 "conversation_id": "1"},
+            ], "includes": {"users": [{"id": "u1", "username": "ada", "name": "Ada"}]}}, fh)
+        data = xn.Data(folder, "me")
+        self.assertIn(("1", "u1"), data.owner_replied_in)
+        now = xn.ts("2026-11-04T18:00:00Z")
+        activity = xn.build_activity(
+            data, xn.ts("2026-11-04T00:00:00Z"), now, 10, 1, 3, "both", now)
+        unanswered, answered = xn.greeting_rows(
+            activity["threads"], activity["owner_replied_in"])
+        self.assertEqual(unanswered, [])
+        self.assertEqual(len(answered), 1)
+        self.assertTrue(answered[0]["replied"])
+
+
+class CatchRecordTest(unittest.TestCase):
+    def test_string_created_at_is_parsed(self):
+        row = xn.catch_record({
+            "name": "Nova Lane",
+            "username": "nova_lane",
+            "latest": {
+                "text": "A paper street with no cars, only chairs.",
+                "created_at": "2026-11-04T16:30:00Z",
+            },
+            "latest_url": "https://x.com/nova_lane/status/83001",
+        })
+        self.assertEqual(row["created_at"], "2026-11-04T16:30:00Z")
+
+    def test_datetime_created_at_still_formats(self):
+        when = xn.ts("2026-11-04T16:30:00Z")
+        row = xn.catch_record({
+            "name": "Nova Lane",
+            "username": "nova_lane",
+            "latest": {"text": "A paper street.", "created_at": when},
+            "latest_url": "https://x.com/nova_lane/status/83001",
+        })
+        self.assertEqual(row["created_at"], "2026-11-04T16:30:00Z")
+
+    def test_week_sample_writes_thanks_and_more_json(self):
+        tmp = tempfile.mkdtemp(prefix="xn-week-")
+        cmd = [
+            sys.executable, os.path.join(ROOT, "x_neighbours.py"),
+            "--config", os.path.join(ROOT, "config.example.json"),
+            "--handle", "samplecreator",
+            "--user-id", "900001",
+            "--data", os.path.join(ROOT, "examples", "sample"),
+            "--out", tmp,
+            "--now", "2026-11-04T18:00:00Z",
+            "--no-picture",
+        ]
+        result = subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True)
+        output = json.loads(result.stdout)["week"]
+        self.assertTrue(os.path.isfile(output["thanks_md"]))
+        self.assertTrue(os.path.isfile(output["more_json"]))
+        with open(output["more_json"], encoding="utf-8") as fh:
+            more = json.load(fh)
+        self.assertGreater(len(more["catch_up"]), 0)
+        for row in more["catch_up"]:
+            self.assertRegex(row["created_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
 if __name__ == "__main__":
     unittest.main()

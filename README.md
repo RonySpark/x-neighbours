@@ -79,7 +79,10 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 |---|---|
 | `handle` | Your X handle, without @ |
 | `user_id` | Your numeric X user id, stored as a string |
-| `like_weight`, `reply_weight` | Quiet points. A reply or quote uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
+| `like_weight`, `reply_weight` | Quiet points. A reply uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
+| `repost_weight`, `quote_weight` | Optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight` |
+| `mutual_reply_bonus` | Optional, default 0. Extra points for a reply on the owner's original post (not a reply or a repost) by a mutual follow |
+| `new_follower_bonus` | Optional, default 0. Extra points once for someone who follows the owner and is not followed back |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |
 | `first_run_days` | How many days the first fetch covers. Default 2. Daily stays 24 hours. Monday stays 7 days |
@@ -94,7 +97,7 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `report` | `both` (default), `likes`, or `replies` |
 | `per_post`, `per_day` | Extra markdown sections. Off unless you ask |
 
-Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`.
+Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`, `--mutual-reply-bonus`, `--new-follower-bonus`.
 
 A plain run writes the markdown report and the neighbours picture. `--first-run` uses `first_run_days`. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
 
@@ -120,20 +123,22 @@ python3 save_raw.py <tool-result-file> <name>
 
 Pick a UTC timestamp `T` when you start. Pass `T` to the script as `--now`. For a week (or for both windows), `start_time` is `T` minus 7 days, for example `T` = `2026-11-04T18:00:00Z` and `start_time` = `2026-10-28T18:00:00Z`. For a day-only run, `start_time` is `T` minus 24 hours. One fetch feeds every window you render: the script cuts the 24-hour window out of the same files.
 
-`{ID}` is your user id. Page with `pagination_token` set to the previous `meta.next_token`, and stop when there is no next token. Pages can be shorter than `max_results`.
+Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_tweets`. The script accepts both.
+
+`{ID}` is your user id. Page with `pagination_token` set to the previous `meta.next_token`. Keep paging while `next_token` is present. Some tools cap a page at 25 even when `max_results` is 100. Stop only when there is no next token.
 
 | # | Tool | Arguments | Save as |
 |---|---|---|---|
-| 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets`, `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
-| 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url` | `mentions_1`, … |
+| 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets`, `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
+| 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url` | `mentions_1`, … |
 | 3 | `get_posts_liking_users` | Posts with likes. `user.fields=username,name,description,profile_image_url` | `likes_<postid>` |
 | 4 | `get_posts_reposted_by` | Posts with reposts. Same user fields | `reposts_<postid>` |
-| 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_tweets`, `expansions=author_id` | `quotes_<postid>` |
-| 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_tweets,conversation_id`, saved as `my_posts_1`. A failed call is skipped | `my_likes_1`, `my_posts_1` |
-| 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=10`, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_tweets` | `latest_<userid>` |
+| 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_posts`, `expansions=author_id` | `quotes_<postid>` |
+| 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_posts,conversation_id`, saved as `my_posts_1`. A failed call is skipped | `my_likes_1`, `my_posts_1` |
+| 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=10`, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts` | `latest_<userid>` |
 | 8 | `get_users_me_followers` and `get_users_me_following` | `max_results=1000`. Refresh on Mondays | `followers_1`, `following_1`, … |
 
-On a Grok Bot these tools are on the X connection. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.
+On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on the built-in public X tools. Likers, followers, following, liked posts, and bookmarks are on the owner's X plugin. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.
 
 ### Keeping the read count down
 
@@ -142,10 +147,11 @@ Stay around **30 calls a minute** and **1,000 calls a day**. Send about 12 calls
 Likes, reposts, and quotes are one call per post:
 
 - The last 24 hours: every post with that count above 0.
-- Days 2–7: only counts of 3 or more.
+- Days 2–7, when a daily run already covered day 1: only counts of 3 or more.
+- Weekly-only (no daily run that week): every post with that count above 0. Do not use the 3-or-more skip.
 - Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty.
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.
-- One page is enough for almost every post. Fetch another page only while you are inside the day's budget.
+- Keep paging while `next_token` is present and you are inside the day's budget. A 25-item page is not complete if a next token remains.
 
 Follower lists refresh on Monday only. The Monday run reuses that morning's daily files and only fetches the earlier part of the week, including likes, reposts, and quotes. The two runs share the 1,000-read cap. The steps are in [BOT.md](BOT.md).
 

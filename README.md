@@ -6,7 +6,7 @@ X Neighbours helps a creator catch up with the people who replied, quoted, liked
 
 ## Contributors
 
-A big thank you to everyone who has helped make X Neighbours better 💐 New neighbours are always welcome: share an idea, report a bug, or pick up an [issue](https://github.com/Skybatan/x-neighbours/issues) and open a pull request.
+A big thank you to everyone who has helped make X Neighbours better 💐 New neighbours are always welcome: share an idea, report a bug, or pick up an [issue](https://github.com/Skybatan/x-neighbours/issues) and open a pull request. The steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - [RonySpark](https://github.com/RonySpark) ([@ronyspark](https://x.com/ronyspark)) — first contribution, [#19](https://github.com/Skybatan/x-neighbours/pull/19): the week-report crash fix on ISO timestamps, the one-row-per-person waiting list, `referenced_posts` support, the paging docs, and the offline tests.
 
@@ -218,6 +218,8 @@ GitHub Actions runs `python3 -m unittest discover -s tests -v` and this offline 
 | `report_state.py` | Read or update the freshness clock in the bot store |
 | `feedback_link.py` | Build a prefilled GitHub issue link. It does not post the issue |
 | `.github/ISSUE_TEMPLATE/feedback.md` | Issue template labelled `feedback` |
+| `CONTRIBUTING.md` | Shared process for issues and pull requests |
+| `.github/pull_request_template.md` | Checklist on every pull request |
 | `save_raw.py` | Store one tool result under `data/` |
 | `config.example.json` | Config template |
 | `skills/x-neighbours/SKILL.md` | Runbook for the bot |

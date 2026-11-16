@@ -6,7 +6,7 @@ folder. Post time is not in the CSV; it is decoded from the Post id snowflake.
 """
 import glob
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -189,3 +189,104 @@ def load_exports(folder):
     if content.empty and overview.empty:
         raise SystemExit(f"no content_*.csv or overview_*.csv in {folder}")
     return {"content": content, "overview": overview, "video": video}
+
+
+def clip_text(text, n=72):
+    one = " ".join(str(text or "").split())
+    return one if len(one) <= n else one[: n - 3] + "..."
+
+
+def latest_export_date(overview, content):
+    dates = []
+    if overview is not None and not overview.empty:
+        dates.append(max(overview["date"]))
+    if content is not None and not content.empty:
+        dates.append(max(content["date"]))
+    if not dates:
+        raise SystemExit("exports have no dates")
+    return max(dates)
+
+
+def week_windows(end):
+    """This week is `end` and the six UTC days before it. Previous is the seven before that."""
+    this_start = end - timedelta(days=6)
+    prev_end = this_start - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=6)
+    return (this_start, end), (prev_start, prev_end)
+
+
+def in_days(frame, start, end, column="date"):
+    if frame is None or frame.empty:
+        return frame
+    return frame[(frame[column] >= start) & (frame[column] <= end)].copy()
+
+
+def sum_counts(frame, columns):
+    if frame is None or frame.empty:
+        return {col: 0 for col in columns}
+    return {col: int(frame[col].sum()) if col in frame.columns else 0 for col in columns}
+
+
+def change(this, previous):
+    delta = this - previous
+    pct = None if previous == 0 else delta / previous
+    return {"this": this, "previous": previous, "change": delta, "pct": pct}
+
+
+def post_ref(row):
+    return {
+        "post_id": str(row["post_id"]),
+        "text": clip_text(row.get("text", "")),
+        "link": str(row.get("link", "") or ""),
+        "impressions": int(row["impressions"]),
+        "engagements": int(row["engagements"]),
+        "engagement_rate": float(row["engagement_rate"]),
+        "new_follows": int(row["new_follows"]),
+        "detail_expands": int(row.get("detail_expands", 0) or 0),
+        "profile_visits": int(row.get("profile_visits", 0) or 0),
+    }
+
+
+def ranked_posts(posts, column, n=3):
+    if posts is None or posts.empty:
+        return [], []
+    high = posts.sort_values(column, ascending=False)
+    low = posts.sort_values(column, ascending=True)
+    top = [post_ref(row) for _, row in high.head(n).iterrows()]
+    bottom = [post_ref(row) for _, row in low.head(n).iterrows()]
+    return top, bottom
+
+
+def scorecard(overview, content):
+    """Last 7 UTC days vs the 7 days before, plus top and bottom posts."""
+    end = latest_export_date(overview, content)
+    this_span, prev_span = week_windows(end)
+    this_days = in_days(overview, *this_span)
+    prev_days = in_days(overview, *prev_span)
+    this_posts = in_days(content, *this_span)
+    prev_posts = in_days(content, *prev_span)
+    overview_keys = [
+        "impressions", "likes", "engagements", "bookmarks", "shares",
+        "new_follows", "unfollows", "replies", "reposts", "profile_visits",
+        "create_post", "video_views", "media_views",
+    ]
+    this_tot = sum_counts(this_days, overview_keys)
+    prev_tot = sum_counts(prev_days, overview_keys)
+    totals = {key: change(this_tot[key], prev_tot[key]) for key in overview_keys}
+    content_keys = ["detail_expands", "url_clicks", "hashtag_clicks", "permalink_clicks"]
+    this_extra = sum_counts(this_posts, content_keys)
+    prev_extra = sum_counts(prev_posts, content_keys)
+    extra = {key: change(this_extra[key], prev_extra[key]) for key in content_keys}
+    extra["posts"] = change(int(len(this_posts)), int(len(prev_posts)))
+    by = {}
+    for column in ("impressions", "engagement_rate", "new_follows"):
+        top, bottom = ranked_posts(this_posts, column)
+        by[column] = {"top": top, "bottom": bottom}
+    return {
+        "end": end.isoformat(),
+        "this_week": [this_span[0].isoformat(), this_span[1].isoformat()],
+        "previous_week": [prev_span[0].isoformat(), prev_span[1].isoformat()],
+        "totals": totals,
+        "from_content": extra,
+        "posts": by,
+    }

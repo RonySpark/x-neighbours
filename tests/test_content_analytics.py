@@ -61,5 +61,35 @@ class LoadExportsTest(unittest.TestCase):
         self.assertGreater(len(loaded["overview"]), 0)
 
 
+class WeeklyScorecardTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        data = ca.load_exports(FIXTURES)
+        cls.card = ca.scorecard(data["overview"], data["content"])
+
+    def test_totals_last_seven_versus_the_seven_before(self):
+        self.assertEqual(self.card["this_week"], ["2026-11-10", "2026-11-16"])
+        self.assertEqual(self.card["previous_week"], ["2026-11-03", "2026-11-09"])
+        impressions = self.card["totals"]["impressions"]
+        self.assertEqual(impressions["this"], 9100)
+        self.assertEqual(impressions["previous"], 4900)
+        self.assertEqual(impressions["change"], 4200)
+        follows = self.card["totals"]["new_follows"]
+        self.assertEqual(follows["this"], 19)
+        self.assertEqual(follows["previous"], 7)
+        self.assertEqual(self.card["from_content"]["posts"]["this"], 29)
+        self.assertEqual(self.card["from_content"]["posts"]["previous"], 7)
+
+    def test_top_and_bottom_posts(self):
+        top_imp = [row["text"] for row in self.card["posts"]["impressions"]["top"]]
+        bottom_imp = [row["text"] for row in self.card["posts"]["impressions"]["bottom"]]
+        self.assertIn("Huge random spike", top_imp)
+        self.assertEqual(bottom_imp[0], "ok")
+        top_er = [row["text"] for row in self.card["posts"]["engagement_rate"]["top"]]
+        self.assertIn("Is Tesla charging easier now?", top_er)
+        top_fol = [row["text"] for row in self.card["posts"]["new_follows"]["top"]]
+        self.assertEqual(top_fol[0], "Should Tesla build in Adelaide?")
+
+
 if __name__ == "__main__":
     unittest.main()

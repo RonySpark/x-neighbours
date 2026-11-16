@@ -73,28 +73,10 @@ def ts(s):
 
 
 def iso_utc(value):
+    """Format a datetime or ISO string as UTC Z time via ts(). Empty if missing."""
     if not value:
         return ""
     return ts(value).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def referenced(post):
-    """Prefer referenced_tweets; fall back to referenced_posts (X API naming)."""
-    if not isinstance(post, dict):
-        return []
-    return post.get("referenced_tweets") or post.get("referenced_posts") or []
-
-
-def normalize_refs(post):
-    refs = []
-    for ref in referenced(post):
-        ref = dict(ref)
-        if ref.get("id") is not None:
-            ref["id"] = str(ref["id"])
-        refs.append(ref)
-    if refs:
-        post["referenced_tweets"] = refs
-    return refs
 
 
 def fmt_num(n):
@@ -120,6 +102,32 @@ def as_bool(value):
     return bool(value)
 
 
+def referenced(obj):
+    """Prefer referenced_tweets; fall back to referenced_posts. Ids are strings."""
+    if not isinstance(obj, dict):
+        return []
+    refs = obj.get("referenced_tweets")
+    if not refs:
+        refs = obj.get("referenced_posts")
+    out = []
+    for ref in refs or []:
+        if not isinstance(ref, dict):
+            continue
+        ref = dict(ref)
+        if ref.get("id") is not None:
+            ref["id"] = str(ref["id"])
+        out.append(ref)
+    return out
+
+
+def set_referenced(obj):
+    """Store referenced posts under referenced_tweets so later reads share one key."""
+    refs = referenced(obj)
+    if refs:
+        obj["referenced_tweets"] = refs
+    return obj
+
+
 def counted(n, singular, plural):
     return f"{n} {singular if n == 1 else plural}"
 
@@ -139,26 +147,31 @@ class Data:
         self.originals = {}
         self.engaged = set()
         self.owner_replied_to = set()
+        self.owner_replied_in = set()
+        self._authors = {}
+        self._conversations = {}
+        self._my_posts = []
         self.likes_truncated = []
         for _, doc in load(os.path.join(data_dir, "posts_*.json")):
             for post in doc.get("data") or []:
                 if not post.get("id"):
                     continue
-                post = dict(post)
+                post = set_referenced(dict(post))
                 post["id"] = str(post["id"])
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
                 if post.get("conversation_id") is not None:
                     post["conversation_id"] = str(post["conversation_id"])
+                self._index_post(post)
                 if post.get("author_id", self.me) == self.me:
                     self.posts[post["id"]] = post
-                    for ref in normalize_refs(post):
+                    for ref in referenced(post):
                         if ref.get("type") == "replied_to" and ref.get("id"):
                             self.owner_replied_to.add(str(ref["id"]))
             self._users((doc.get("includes") or {}).get("users") or [])
         for _, doc in load(os.path.join(data_dir, "mentions_*.json")):
             for mention in doc.get("data") or []:
-                mention = dict(mention)
+                mention = set_referenced(dict(mention))
                 mid = mention.get("id")
                 if mid is not None:
                     mid = str(mid)
@@ -172,7 +185,7 @@ class Data:
                     mention["in_reply_to_user_id"] = str(mention["in_reply_to_user_id"])
                 if mention.get("conversation_id") is not None:
                     mention["conversation_id"] = str(mention["conversation_id"])
-                normalize_refs(mention)
+                self._index_post(mention)
                 self.mentions.append(mention)
             self._users((doc.get("includes") or {}).get("users") or [])
         for path, doc in load(os.path.join(data_dir, "likes_*.json")):
@@ -199,6 +212,43 @@ class Data:
         self._load_engagement()
         self.followers = self._idset("followers_*.json")
         self.following = self._idset("following_*.json")
+
+    def _index_post(self, post):
+        if not isinstance(post, dict):
+            return
+        pid = str(post.get("id") or "")
+        if not pid:
+            return
+        if post.get("author_id") is not None:
+            self._authors[pid] = str(post["author_id"])
+        conv = post.get("conversation_id")
+        if conv:
+            self._conversations[pid] = str(conv)
+        elif is_original_post(post) and pid not in self._conversations:
+            self._conversations[pid] = pid
+
+    def _note_owner_reply(self, post):
+        if not isinstance(post, dict):
+            return
+        author = post.get("author_id")
+        if author is not None and str(author) != self.me:
+            return
+        reply_ids = [str(ref["id"]) for ref in referenced(post)
+                     if ref.get("type") == "replied_to" and ref.get("id")]
+        if not reply_ids and not post.get("in_reply_to_user_id"):
+            return
+        person = post.get("in_reply_to_user_id")
+        person = str(person) if person else None
+        conv = post.get("conversation_id")
+        conv = str(conv) if conv else None
+        for rid in reply_ids:
+            self.owner_replied_to.add(rid)
+            if not person:
+                person = self._authors.get(rid)
+            if not conv:
+                conv = self._conversations.get(rid) or rid
+        if conv and person and person != self.me:
+            self.owner_replied_in.add((conv, person))
 
     def _prepare_user(self, user):
         user = dict(user)
@@ -249,7 +299,7 @@ class Data:
             bucket = self.quotes.setdefault(pid, [])
             have = {item.get("id") for item in bucket}
             for post in doc.get("data") or []:
-                post = dict(post)
+                post = set_referenced(dict(post))
                 if post.get("id") is None:
                     continue
                 post["id"] = str(post["id"])
@@ -259,8 +309,8 @@ class Data:
                     post["author_id"] = str(post["author_id"])
                 if post.get("conversation_id") is not None:
                     post["conversation_id"] = str(post["conversation_id"])
-                normalize_refs(post)
                 post["_on_post"] = pid
+                self._index_post(post)
                 bucket.append(post)
                 have.add(post["id"])
 
@@ -273,7 +323,7 @@ class Data:
             self._users((doc.get("includes") or {}).get("users") or [])
             posts = []
             for post in doc.get("data") or []:
-                post = dict(post)
+                post = set_referenced(dict(post))
                 if post.get("id") is None or not post.get("created_at"):
                     continue
                 post["id"] = str(post["id"])
@@ -283,7 +333,6 @@ class Data:
                     post["in_reply_to_user_id"] = str(post["in_reply_to_user_id"])
                 if post.get("conversation_id") is not None:
                     post["conversation_id"] = str(post["conversation_id"])
-                normalize_refs(post)
                 if is_original_post(post):
                     posts.append(post)
             if not posts:
@@ -323,11 +372,16 @@ class Data:
             self._add_owner_targets(post)
         for doc in load_soft(os.path.join(self.data_dir, "my_posts_*.json")):
             for post in doc.get("data") or []:
+                post = set_referenced(dict(post))
+                self._index_post(post)
+                self._my_posts.append(post)
                 self._add_owner_targets(post)
         for doc in load_soft(os.path.join(self.data_dir, "my_likes_*.json")):
             for post in doc.get("data") or []:
                 if isinstance(post, dict) and post.get("id") is not None:
                     self.engaged.add(str(post["id"]))
+        for post in list(self.posts.values()) + self._my_posts:
+            self._note_owner_reply(post)
 
     def _idset(self, pattern):
         found = set()
@@ -344,6 +398,15 @@ class Data:
     def relation(self, uid):
         follows_you = uid in self.followers
         you_follow = uid in self.following
+        status = (self.users.get(uid) or {}).get("connection_status")
+        if status:
+            if isinstance(status, str):
+                status = [status]
+            flags = {str(item).lower().replace("-", "_").replace(" ", "_") for item in status}
+            if "followed_by" in flags:
+                follows_you = True
+            if "following" in flags:
+                you_follow = True
         if follows_you and you_follow:
             return "mutual"
         if follows_you:
@@ -426,17 +489,25 @@ def link(user):
     return f"[@{handle}](https://x.com/{handle})"
 
 
-def score(likes, replies, like_weight, reply_weight):
-    ranked = Counter()
-    people = set(likes) | set(replies)
-    order = sorted(people, key=lambda uid: (
-        -(likes[uid] * like_weight + replies[uid] * reply_weight),
-        -replies[uid],
-        uid,
-    ))
-    for uid in order:
-        ranked[uid] = likes[uid] * like_weight + replies[uid] * reply_weight
-    return ranked
+def optional_weight(value, fallback):
+    if value is None or value == "":
+        return fallback
+    return whole_number(value)
+
+
+def resolve_weights(cfg):
+    like_weight = whole_number(cfg.get("like_weight", 1))
+    reply_weight = whole_number(cfg.get("reply_weight", 3))
+    return {
+        "like_weight": like_weight,
+        "reply_weight": reply_weight,
+        "repost_weight": optional_weight(cfg.get("repost_weight"), like_weight),
+        "quote_weight": optional_weight(cfg.get("quote_weight"), reply_weight),
+        "mutual_reply_bonus": optional_weight(cfg.get("mutual_reply_bonus"), 0),
+        "new_follower_bonus": optional_weight(cfg.get("new_follower_bonus"), 0),
+        "mutual_bonus": optional_weight(cfg.get("mutual_bonus"), 0),
+        "new_follower_credit": optional_weight(cfg.get("new_follower_credit"), 0),
+    }
 
 
 def active_counts(likes, replies, report):
@@ -746,6 +817,10 @@ DEFAULTS = {
         "per_person": True,
         "latest_unreplied": True,
     },
+    "repost_weight": None,
+    "quote_weight": None,
+    "mutual_reply_bonus": 0,
+    "new_follower_bonus": 0,
     "exclude": ["grok"],
     "rings": 3,
     "show_names": True,
@@ -863,7 +938,13 @@ def waiting_rule_from(value):
 
 
 def build_activity(data, since, until, top, like_weight, reply_weight, mode, now,
-                   good_neighbours=None, mutual_bonus=0, new_follower_credit=0):
+                   good_neighbours=None, mutual_bonus=0, new_follower_credit=0,
+                   repost_weight=None, quote_weight=None,
+                   mutual_reply_bonus=0, new_follower_bonus=0):
+    if repost_weight is None:
+        repost_weight = like_weight
+    if quote_weight is None:
+        quote_weight = reply_weight
     items = []
     seen = set()
 
@@ -884,8 +965,8 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             "on_id": on_id,
             "on_text": post_text(data, on_id) if on_id else "your post",
             "url": status_url(data, author, post["id"]),
+            "conversation_id": str(conversation) if conversation else str(on_id or post.get("id") or ""),
             "replied": post["id"] in data.owner_replied_to,
-            "conversation_id": str(conversation) if conversation else None,
         })
 
     for mention in data.mentions:
@@ -907,6 +988,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
 
     likes_c, reposts_c = Counter(), Counter()
     reply_c, quote_c = Counter(), Counter()
+    mutual_reply_c = Counter()
     for pid, post in data.posts.items():
         if not data._in_window(post.get("created_at"), since, until):
             continue
@@ -918,17 +1000,29 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
                 reposts_c[uid] += 1
     for item in items:
         (quote_c if item["kind"] == "quote" else reply_c)[item["author_id"]] += 1
+        if item["kind"] != "reply":
+            continue
+        on_post = data.posts.get(item.get("on_id")) if item.get("on_id") else None
+        if on_post and is_original_post(on_post) and data.relation(item["author_id"]) == "mutual":
+            mutual_reply_c[item["author_id"]] += 1
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
         reposts = reposts_c[uid] if which != "replies" else 0
         replies = reply_c[uid] if which != "likes" else 0
         quotes = quote_c[uid] if which != "likes" else 0
+        mutual_replies = mutual_reply_c[uid] if which != "likes" else 0
+        follower_bonus = new_follower_bonus if data.relation(uid) == "follows-you" else 0
         if which == "likes":
-            replies = quotes = 0
+            replies = quotes = mutual_replies = 0
         if which == "replies":
             likes = reposts = 0
-        total = (likes + reposts) * like_weight + (replies + quotes) * reply_weight
+        total = (likes * like_weight
+                 + reposts * repost_weight
+                 + replies * reply_weight
+                 + quotes * quote_weight
+                 + mutual_replies * mutual_reply_bonus
+                 + follower_bonus)
         if uid in data.followers and uid in data.following:
             total += mutual_bonus
         elif uid in data.followers:
@@ -1055,6 +1149,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         "has_good_neighbours": bool(good),
         "catch_hint": not good,
         "all_caught_up": not catch_up and bool(skipped_engaged),
+        "owner_replied_in": getattr(data, "owner_replied_in", set()),
     }
 
 
@@ -1241,18 +1336,30 @@ def thread_key(item):
     return item.get("conversation_id") or item.get("on_id") or item.get("id")
 
 
-def greeting_rows(threads, waiting_rule=None):
-    """One row per person by default. Waiting only if their latest message in
-    that thread has no reply from the owner."""
+def greeting_rows(threads, waiting_rule=None, owner_replied_in=None):
+    """Waiting rows for replies.
+
+    Default (`waiting_rule.per_person`): one row per person, waiting only if
+    their latest message has no owner reply. Pass a set of
+    `(conversation_id, user_id)` as the second argument to emit one row per
+    person per conversation (owner already replied in that thread).
+    """
+    per_conversation = False
+    if isinstance(waiting_rule, (set, frozenset)):
+        owner_replied_in, waiting_rule = waiting_rule, None
+        per_conversation = True
     rule = waiting_rule_from(waiting_rule)
+    owner_replied_in = owner_replied_in or set()
     unanswered, answered = [], []
 
     def when_of(item):
         created = item.get("created_at")
         return ts(created) if created else datetime.min.replace(tzinfo=timezone.utc)
 
-    def make_row(thread, item):
+    def make_row(thread, item, replied=None):
         created = item.get("created_at")
+        if replied is None:
+            replied = bool(item.get("replied"))
         return {
             "name": thread["name"],
             "username": thread["username"],
@@ -1263,7 +1370,7 @@ def greeting_rows(threads, waiting_rule=None):
             "url": item.get("url") or "",
             "on_text": snippet(item.get("on_text") or ""),
             "created_at": iso_utc(created),
-            "replied": bool(item.get("replied")),
+            "replied": replied,
             "avatar": avatar_url(thread),
             "_when": when_of(item),
         }
@@ -1272,32 +1379,49 @@ def greeting_rows(threads, waiting_rule=None):
         items = list(thread.get("items") or [])
         if not items:
             continue
-        if not rule["per_person"]:
+        uid = str(thread.get("id") or "")
+        if not rule["per_person"] and not per_conversation:
             for item in items:
-                row = make_row(thread, item)
+                conv = str(thread_key(item) or "")
+                replied = (conv, uid) in owner_replied_in or bool(item.get("replied"))
+                row = make_row(thread, item, replied)
                 (answered if row["replied"] else unanswered).append(row)
             continue
         groups = defaultdict(list)
         for item in items:
             groups[thread_key(item)].append(item)
         waiting, done = [], []
-        for group in groups.values():
+        for conv_key, group in groups.items():
             group.sort(key=when_of, reverse=True)
+            conv = str(conv_key or "")
+            owner_hit = (conv, uid) in owner_replied_in
             if rule["latest_unreplied"]:
                 latest = group[0]
-                (done if latest.get("replied") else waiting).append(latest)
+                replied = owner_hit or bool(latest.get("replied"))
+                (done if replied else waiting).append((latest, replied))
             else:
-                open_items = [item for item in group if not item.get("replied")]
+                open_items = [
+                    item for item in group
+                    if not (owner_hit or item.get("replied"))
+                ]
                 if open_items:
-                    waiting.append(open_items[0])
+                    waiting.append((open_items[0], False))
                 else:
-                    done.append(group[0])
+                    done.append((group[0], True))
+        if per_conversation:
+            for item, replied in waiting:
+                unanswered.append(make_row(thread, item, replied))
+            for item, replied in done:
+                answered.append(make_row(thread, item, replied))
+            continue
         if waiting:
-            waiting.sort(key=when_of, reverse=True)
-            unanswered.append(make_row(thread, waiting[0]))
+            waiting.sort(key=lambda pair: when_of(pair[0]), reverse=True)
+            item, replied = waiting[0]
+            unanswered.append(make_row(thread, item, replied))
         elif done:
-            done.sort(key=when_of, reverse=True)
-            answered.append(make_row(thread, done[0]))
+            done.sort(key=lambda pair: when_of(pair[0]), reverse=True)
+            item, replied = done[0]
+            answered.append(make_row(thread, item, replied))
     unanswered.sort(key=lambda row: row["_when"], reverse=True)
     answered.sort(key=lambda row: row["_when"], reverse=True)
     return unanswered, answered
@@ -1380,7 +1504,9 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
         if extra > 0:
             lines.append(f"+{extra} more in What's new. Ask to see them.")
             lines.append("")
-    unanswered, answered = greeting_rows(activity["threads"], waiting_rule)
+    unanswered, answered = greeting_rows(
+        activity["threads"], waiting_rule,
+        owner_replied_in=activity.get("owner_replied_in"))
     if not unanswered and not answered:
         lines.append("No replies or quote posts in this stretch.")
     else:
@@ -1455,7 +1581,9 @@ def open_item_rows(data, activity, thanks, handle, waiting_rule=None):
                 "Follows you; you don't follow them",
                 f"https://x.com/{row.get('username')}",
             )
-    unanswered, _answered = greeting_rows(activity.get("threads") or [], waiting_rule)
+    unanswered, _answered = greeting_rows(
+        activity.get("threads") or [], waiting_rule,
+        owner_replied_in=activity.get("owner_replied_in"))
     for row in unanswered:
         add(
             "first_reply",
@@ -1779,12 +1907,19 @@ def thank_you_post(when, zone):
     return text, "https://x.com/intent/post?text=" + urllib.parse.quote(text)
 
 
-def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per_post, per_day):
+def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per_post, per_day,
+                   repost_weight=None, quote_weight=None, mutual_reply_bonus=0,
+                   new_follower_bonus=0, mutual_bonus=0, new_follower_credit=0):
     lines = []
     if per_day:
         lines += ["### Per day", ""]
         for day, day_start, day_end in each_utc_day(since, now):
-            activity = build_activity(data, day_start, day_end, top, like_weight, reply_weight, "both", now)
+            activity = build_activity(
+                data, day_start, day_end, top, like_weight, reply_weight, "both", now,
+                mutual_bonus=mutual_bonus, new_follower_credit=new_follower_credit,
+                repost_weight=repost_weight, quote_weight=quote_weight,
+                mutual_reply_bonus=mutual_reply_bonus,
+                new_follower_bonus=new_follower_bonus)
             totals = activity["totals"]
             lines.append(
                 f"- **{day.isoformat()}** — {totals['replies']} replies, {totals['quotes']} quotes, "
@@ -1825,6 +1960,10 @@ def main():
     parser.add_argument("--now", help="UTC ISO time the data was fetched (default: now)")
     parser.add_argument("--like-weight", dest="like_weight", type=float)
     parser.add_argument("--reply-weight", dest="reply_weight", type=float)
+    parser.add_argument("--repost-weight", dest="repost_weight", type=float)
+    parser.add_argument("--quote-weight", dest="quote_weight", type=float)
+    parser.add_argument("--mutual-reply-bonus", dest="mutual_reply_bonus", type=float)
+    parser.add_argument("--new-follower-bonus", dest="new_follower_bonus", type=float)
     parser.add_argument("--exclude", help="comma-separated handles to drop; '' for none")
     parser.add_argument("--rings", type=int)
     parser.add_argument("--top", type=int)
@@ -1898,10 +2037,15 @@ def main():
     if not os.path.isdir(args.data):
         parser.error(f"data folder not found: {args.data}")
     os.makedirs(args.out, exist_ok=True)
-    like_weight = whole_number(cfg["like_weight"])
-    reply_weight = whole_number(cfg["reply_weight"])
-    mutual_bonus = whole_number(cfg.get("mutual_bonus") or 0)
-    new_follower_credit = whole_number(cfg.get("new_follower_credit") or 0)
+    weights = resolve_weights(cfg)
+    like_weight = weights["like_weight"]
+    reply_weight = weights["reply_weight"]
+    repost_weight = weights["repost_weight"]
+    quote_weight = weights["quote_weight"]
+    mutual_reply_bonus = weights["mutual_reply_bonus"]
+    new_follower_bonus = weights["new_follower_bonus"]
+    mutual_bonus = weights["mutual_bonus"]
+    new_follower_credit = weights["new_follower_credit"]
     waiting_rule = waiting_rule_from(cfg.get("waiting_rule"))
     me_id = str(cfg["user_id"])
     now = ts(args.now) if args.now else datetime.now(timezone.utc)
@@ -1947,7 +2091,10 @@ def main():
         activity = build_activity(
             data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
             good_neighbours=neighbours,
-            mutual_bonus=mutual_bonus, new_follower_credit=new_follower_credit)
+            mutual_bonus=mutual_bonus, new_follower_credit=new_follower_credit,
+            repost_weight=repost_weight, quote_weight=quote_weight,
+            mutual_reply_bonus=mutual_reply_bonus,
+            new_follower_bonus=new_follower_bonus)
         md_path = os.path.join(args.out, f"report_{key}.md")
         png_path = os.path.join(args.out, f"report_{key}.png")
         text, intent = thank_you_post(now, zone)
@@ -1989,7 +2136,12 @@ def main():
             with open(md_path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + extra_sections(
                     data, since, now, cfg["handle"], cfg["top"], like_weight, reply_weight,
-                    cfg["per_post"], cfg["per_day"]) + "\n")
+                    cfg["per_post"], cfg["per_day"],
+                    repost_weight=repost_weight, quote_weight=quote_weight,
+                    mutual_reply_bonus=mutual_reply_bonus,
+                    new_follower_bonus=new_follower_bonus,
+                    mutual_bonus=mutual_bonus,
+                    new_follower_credit=new_follower_credit) + "\n")
         if args.report_card and not args.no_image:
             render_report(
                 activity, png_path, cfg["handle"], since, now, label,

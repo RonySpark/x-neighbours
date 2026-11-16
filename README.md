@@ -228,7 +228,7 @@ A separate read-only script turns X Analytics CSV exports into a short Sunday pa
 python3 content_analytics.py --exports ~/exports --out . --json
 ```
 
-That writes `what_worked_week.md` and, with `--json`, `what_worked_week.json`. Optional `--config config.json` picks up `keyword_tags` (Tesla and Adelaide if you leave them out). Optional `--data <dir>` joins the saved likers, reposters, and repliers to the follower snapshot already in that folder and adds follower vs non-follower share; leave it off and that part is skipped. Real exports and the generated files are gitignored.
+That writes `what_worked_week.md` and, with `--json`, `what_worked_week.json`. Optional `--config config.json` picks up `keyword_tags` (Tesla and Adelaide if you leave them out). Optional `--data <dir>` joins the saved likers, reposters, and repliers to the follower snapshot already in that folder and adds follower vs non-follower share; leave it off and that part is skipped. Optional `--post-follows-csv PATH` writes one row per post for the 48-hour review; `--review-log PATH` fills `follows_48h` on an existing CSV by status id (`?s=` and trailing slashes ignored; blank when the post is older than 72 hours at export). X's New follows is the Analytics per-post count as of export time, not strictly within 48 hours: `follows_window_note` is `within_48h` when the post is at most 48 hours old at export, otherwise `lifetime_to_export`. Real exports and the generated files are gitignored.
 
 ## Privacy
 

@@ -3,11 +3,16 @@
 
 Reads content_*.csv, overview_*.csv, and optional video_*.csv from an exports
 folder. Post time is not in the CSV; it is decoded from the Post id snowflake.
+
+Usage:
+  python3 content_analytics.py --exports <dir> --out <dir> [--json]
 """
+import argparse
 import glob
 import json
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -565,3 +570,176 @@ def consistency(overview, content):
         "underperformer": examples["underperformer"],
         "median_impressions": examples["median_impressions"],
     }
+
+
+def analyze(folder, keywords=None):
+    keywords = keywords or DEFAULT_KEYWORDS
+    data = load_exports(folder)
+    overview, content = data["overview"], data["content"]
+    card = scorecard(overview, content)
+    start = datetime.fromisoformat(card["this_week"][0]).date()
+    end = datetime.fromisoformat(card["this_week"][1]).date()
+    this_posts = in_days(content, start, end)
+    return {
+        "keywords": list(keywords),
+        "scorecard": card,
+        "types": content_types(this_posts, keywords),
+        "times": posting_times(this_posts),
+        "funnel": funnel(this_posts, keywords),
+        "consistency": consistency(overview, content),
+    }
+
+
+def json_ready(value):
+    if isinstance(value, dict):
+        return {str(key): json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_ready(item) for item in value]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        return json_ready(value.item())
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def fmt_change(item):
+    if not item or item.get("previous") == 0:
+        return "from nothing last week" if item and item.get("this") else "same as last week"
+    pct = item.get("pct")
+    if not pct:
+        return "same as last week"
+    if pct > 0:
+        return f"up {pct:.0%}"
+    return f"down {abs(pct):.0%}"
+
+
+def fmt_rate(value):
+    pct = (value or 0) * 100
+    if pct >= 10:
+        return f"{pct:.0f}%"
+    if pct >= 1:
+        return f"{pct:.1f}%"
+    return f"{pct:.2f}%"
+
+
+def short_span(start, end):
+    a = datetime.fromisoformat(start)
+    b = datetime.fromisoformat(end)
+    if a.month == b.month and a.year == b.year:
+        return f"{a.day}–{b.day} {a.strftime('%b')}"
+    return f"{a.day} {a.strftime('%b')}–{b.day} {b.strftime('%b')}"
+
+
+def quoted(post):
+    if not post:
+        return ""
+    return '"' + post["text"] + '"'
+
+
+def render_markdown(report):
+    """Short paste-in section for the Sunday report. Aim for about 15 lines."""
+    card = report["scorecard"]
+    types = report["types"]
+    times = report["times"]
+    funnel_data = report["funnel"]
+    cons = report["consistency"]
+    totals = card["totals"]
+    lines = ["## What worked this week", ""]
+    lines.append(
+        f"{short_span(*card['this_week'])} vs {short_span(*card['previous_week'])}. "
+        f"Impressions {xn.fmt_num(totals['impressions']['this'])} ({fmt_change(totals['impressions'])}). "
+        f"New follows {xn.fmt_num(totals['new_follows']['this'])} ({fmt_change(totals['new_follows'])}). "
+        f"{cons['posts']['this']} posts, {cons['posts_per_day']:.1f} a day "
+        f"(was {cons['posts']['previous']} last week)."
+    )
+    lines.append("")
+    top_imp = (card["posts"]["impressions"]["top"] or [None])[0]
+    top_fol = (card["posts"]["new_follows"]["top"] or [None])[0]
+    quiet = (card["posts"]["impressions"]["bottom"] or [None])[0]
+    if top_imp:
+        lines.append(
+            f"Best reach: {quoted(top_imp)} — {xn.fmt_num(top_imp['impressions'])} impressions.")
+    if top_fol:
+        lines.append(
+            f"Best follows: {quoted(top_fol)} — {top_fol['new_follows']} new follows.")
+    if quiet:
+        lines.append(
+            f"Quietest: {quoted(quiet)} — {xn.fmt_num(quiet['impressions'])} impressions.")
+    lines.append("")
+    def pretty_type(name):
+        return name if name[:1].isupper() else name.capitalize()
+
+    lead = [pretty_type(row["type"]) for row in types[:2]]
+    if len(lead) >= 2:
+        type_bit = f"{lead[0]} and {lead[1]} posts had the strongest median engagement."
+    elif lead:
+        type_bit = f"{lead[0]} posts had the strongest median engagement."
+    else:
+        type_bit = "No content type had three posts this week."
+    lines.append(
+        type_bit
+        + " Types with fewer than 3 posts are left out. Media is skipped because the CSV does not mark it."
+    )
+    weekday = (times.get("best_weekday") or {}).get("weekday")
+    block = times.get("best_block") or {}
+    if weekday and block:
+        lines.append(
+            f"Best time to post: {weekday}, especially {block.get('label', '')} Adelaide, "
+            "after dropping the loudest 5% of posts."
+        )
+    elif weekday:
+        lines.append(f"Best weekday to post: {weekday} Adelaide.")
+    overall = funnel_data["overall"]
+    lines.append(
+        f"Funnel: {fmt_rate(overall['expand_rate'])} of impressions opened the post, "
+        f"{fmt_rate(overall['visit_rate'])} of those visited the profile, "
+        f"{fmt_rate(overall['follow_rate'])} of visits followed."
+    )
+    streak = cons["streak"]
+    lines.append(
+        f"Streak: {streak['days']} Adelaide days in a row with an original post."
+    )
+    lines.append("")
+    if cons.get("do_more"):
+        lines.append(f"Do more of this: {quoted(cons['do_more'])}.")
+    if cons.get("underperformer"):
+        lines.append(f"Ease off: {quoted(cons['underperformer'])}.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_report(report, out_dir, write_json=False):
+    os.makedirs(out_dir, exist_ok=True)
+    md_path = os.path.join(out_dir, "what_worked_week.md")
+    with open(md_path, "w", encoding="utf-8") as fh:
+        fh.write(render_markdown(report))
+    paths = {"markdown": md_path, "json": None}
+    if write_json:
+        json_path = os.path.join(out_dir, "what_worked_week.json")
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(json_ready(report), fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+        paths["json"] = json_path
+    return paths
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Weekly content analytics from X Analytics CSV exports. No X API calls.")
+    parser.add_argument("--exports", required=True, help="folder with content_*.csv and overview_*.csv")
+    parser.add_argument("--out", default=".", help="folder for what_worked_week.md")
+    parser.add_argument("--json", action="store_true", help="also write what_worked_week.json")
+    parser.add_argument("--config", help="optional config.json for keyword_tags")
+    args = parser.parse_args()
+    report = analyze(args.exports, load_keywords(args.config))
+    paths = write_report(report, args.out, args.json)
+    print(json.dumps(paths, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

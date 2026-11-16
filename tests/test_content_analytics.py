@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Behaviour tests for X Analytics CSV exports. Fixtures are fictional."""
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from datetime import date, timezone
 
@@ -191,6 +195,35 @@ class ConsistencyTest(unittest.TestCase):
         self.assertEqual(self.report["posts"]["previous"], 7)
         self.assertEqual(self.report["do_more"]["text"], "Is Tesla charging easier now?")
         self.assertEqual(self.report["underperformer"]["text"], "Huge random spike")
+
+
+class ReportCliTest(unittest.TestCase):
+    def test_writes_markdown_and_optional_json(self):
+        out = tempfile.mkdtemp(prefix="xn-what-worked-")
+        cmd = [
+            sys.executable, os.path.join(ROOT, "content_analytics.py"),
+            "--exports", FIXTURES, "--out", out, "--json",
+            "--config", os.path.join(ROOT, "config.example.json"),
+        ]
+        result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        md_path = os.path.join(out, "what_worked_week.md")
+        json_path = os.path.join(out, "what_worked_week.json")
+        self.assertTrue(os.path.isfile(md_path))
+        self.assertTrue(os.path.isfile(json_path))
+        with open(md_path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertTrue(text.startswith("## What worked this week"))
+        self.assertIn("Wednesday", text)
+        self.assertIn("Is Tesla charging easier now?", text)
+        self.assertIn("Huge random spike", text)
+        lines = [line for line in text.strip().splitlines() if line.strip()]
+        self.assertGreaterEqual(len(lines), 8)
+        self.assertLessEqual(len(lines), 22)
+        with open(json_path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["consistency"]["streak"]["days"], 7)
+        self.assertEqual(doc["scorecard"]["totals"]["impressions"]["this"], 9100)
 
 
 if __name__ == "__main__":

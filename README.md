@@ -122,7 +122,7 @@ Pick a UTC timestamp `T` when you start. Pass `T` to the script as `--now`. For 
 
 Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_tweets`. The script accepts both.
 
-`{ID}` is your user id. Page with `pagination_token` set to the previous `meta.next_token`, and stop when there is no next token. Pages can be shorter than `max_results`.
+`{ID}` is your user id. Page with `pagination_token` set to the previous `meta.next_token`. Keep paging while `next_token` is present. Some tools cap a page at 25 even when `max_results` is 100. Stop only when there is no next token.
 
 | # | Tool | Arguments | Save as |
 |---|---|---|---|
@@ -148,7 +148,7 @@ Likes, reposts, and quotes are one call per post:
 - Weekly-only (no daily run that week): every post with that count above 0. Do not use the 3-or-more skip.
 - Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty.
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.
-- One page is enough for almost every post. Fetch another page only while you are inside the day's budget.
+- Keep paging while `next_token` is present and you are inside the day's budget. A 25-item page is not complete if a next token remains.
 
 Follower lists refresh on Monday only. The Monday run reuses that morning's daily files and only fetches the earlier part of the week, including likes, reposts, and quotes. The two runs share the 1,000-read cap. The steps are in [BOT.md](BOT.md).
 

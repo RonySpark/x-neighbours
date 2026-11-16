@@ -65,6 +65,16 @@ def ts(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+def utc_iso(value):
+    """Format a datetime or ISO string as UTC Z time. Empty if missing."""
+    if not value:
+        return ""
+    when = ts(value) if isinstance(value, str) else value
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def fmt_num(n):
     n = n or 0
     if n >= 1_000_000:
@@ -1189,7 +1199,7 @@ def catch_record(person):
         "stranger": bool(person.get("stranger")),
         "text": snippet(latest.get("text")) or "Post",
         "url": person.get("latest_url") or "",
-        "created_at": created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if created else "",
+        "created_at": utc_iso(created),
         "avatar": avatar_url(person),
     }
 

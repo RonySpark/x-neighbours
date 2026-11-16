@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from datetime import date, datetime, timezone
 
+import pandas as pd
+
 import content_analytics as ca
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -129,6 +131,44 @@ def this_week_posts():
     return data, ca.in_days(data["content"], *this_span)
 
 
+def _time_posts(rows):
+    """Synthetic rows: (weekday, hour, impressions, text). No real X data."""
+    return pd.DataFrame([
+        {
+            "adelaide_weekday": weekday,
+            "adelaide_hour": hour,
+            "impressions": impressions,
+            "engagement_rate": 0.1,
+            "text": text,
+        }
+        for weekday, hour, impressions, text in rows
+    ])
+
+
+def _times_report(times):
+    """Minimal report so render_markdown can print best-time lines."""
+    zero = {"this": 0, "previous": 0, "change": 0, "pct": None}
+    return {
+        "scorecard": {
+            "this_week": ["2026-11-10", "2026-11-16"],
+            "previous_week": ["2026-11-03", "2026-11-09"],
+            "totals": {"impressions": zero, "new_follows": zero},
+            "posts": {
+                "impressions": {"top": [], "bottom": []},
+                "new_follows": {"top": []},
+            },
+        },
+        "types": [],
+        "times": times,
+        "funnel": {"overall": {"expand_rate": 0, "visit_rate": 0, "follow_rate": 0}},
+        "consistency": {
+            "posts": {"this": 0, "previous": 0},
+            "posts_per_day": 0.0,
+            "streak": {"days": 0},
+        },
+    }
+
+
 class PostingTimesTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -147,6 +187,124 @@ class PostingTimesTest(unittest.TestCase):
         self.assertEqual(len(spike), 1)
         self.assertGreaterEqual(float(spike.iloc[0]["impressions"]), self.times["cutoff"])
         self.assertNotIn("Thursday", self.times["best_weekday"]["weekday"])
+
+    def test_six_posts_does_not_drop_the_winning_wednesday(self):
+        posts = _time_posts([
+            ("Wednesday", 18, 5000, "wed one"),
+            ("Wednesday", 18, 5100, "wed two"),
+            ("Wednesday", 18, 4900, "wed three"),
+            ("Friday", 18, 100, "fri one"),
+            ("Friday", 18, 110, "fri two"),
+            ("Friday", 18, 90, "fri three"),
+        ])
+        times = ca.posting_times(posts)
+        self.assertEqual(times["dropped"], 0)
+        self.assertEqual(times["best_weekday"]["weekday"], "Wednesday")
+        self.assertEqual(times["best_weekday"]["posts"], 3)
+        self.assertEqual(times["sample_posts"], 3)
+
+    def test_three_posts_still_report_a_best_time(self):
+        posts = _time_posts([
+            ("Wednesday", 18, 5000, "a"),
+            ("Wednesday", 18, 5100, "b"),
+            ("Wednesday", 18, 4900, "c"),
+        ])
+        times = ca.posting_times(posts)
+        self.assertEqual(times["dropped"], 0)
+        self.assertEqual(times["kept"], 3)
+        self.assertEqual(times["best_weekday"]["weekday"], "Wednesday")
+        self.assertEqual(times["best_block"]["start_hour"], 18)
+        phrase = ca.best_time_phrase(times)
+        self.assertIn("Wednesday 18:00-20:00 Adelaide (3 posts, small sample)", phrase)
+
+    def test_block_starts_at_an_hour_that_has_posts(self):
+        posts = _time_posts([
+            ("Monday", 20, 1000, "a"),
+            ("Tuesday", 20, 1000, "b"),
+            ("Wednesday", 20, 1000, "c"),
+        ])
+        times = ca.posting_times(posts)
+        self.assertEqual(times["best_block"]["start_hour"], 20)
+        self.assertEqual(times["best_block"]["label"], "20:00-22:00")
+        self.assertNotEqual(times["best_block"]["start_hour"], 18)
+        self.assertIn("20:00-22:00", ca.best_time_phrase(times))
+
+    def test_per_type_sample_sizes_and_floor(self):
+        posts = _time_posts([
+            ("Tuesday", 4, 8000, "@bot short one"),
+            ("Tuesday", 4, 8100, "@bot short two"),
+            ("Tuesday", 4, 7900, "@bot short three"),
+            ("Tuesday", 4, 8050, "@bot short four"),
+            ("Tuesday", 4, 7950, "@bot short five"),
+            ("Friday", 9, 400, "https://example.com/one"),
+            ("Friday", 9, 410, "https://example.com/two"),
+            ("Friday", 9, 390, "https://example.com/three"),
+            ("Saturday", 12, 50, "x" * 210),
+            ("Saturday", 12, 55, "y" * 210),
+        ])
+        times = ca.posting_times(posts)
+        by_type = {row["type"]: row for row in times["by_type"]}
+        self.assertIn("short", by_type)
+        self.assertIn("reply", by_type)
+        self.assertIn("link", by_type)
+        self.assertNotIn("long", by_type)
+        self.assertEqual(by_type["short"]["sample_posts"], 5)
+        self.assertEqual(by_type["short"]["best_weekday"]["weekday"], "Tuesday")
+        self.assertEqual(by_type["short"]["best_block"]["start_hour"], 4)
+        self.assertEqual(by_type["reply"]["sample_posts"], 5)
+        self.assertEqual(by_type["link"]["sample_posts"], 3)
+        self.assertEqual(by_type["link"]["best_weekday"]["weekday"], "Friday")
+        self.assertIn("(5 posts)", ca.best_time_phrase(by_type["reply"]))
+        self.assertNotIn("small sample", ca.best_time_phrase(by_type["reply"]))
+        self.assertIn("(3 posts, small sample)", ca.best_time_phrase(by_type["link"]))
+        text = ca.render_markdown(_times_report(times))
+        self.assertIn("Best time to post: Tuesday 04:00-06:00 Adelaide (5 posts).", text)
+        self.assertEqual(text.count("By type:"), 1)
+        by_line = text.split("By type:")[1].split("\n")[0]
+        self.assertIn("Reply Tuesday 04:00-06:00 Adelaide (5 posts)", by_line)
+        self.assertIn("Short Tuesday 04:00-06:00 Adelaide (5 posts)", by_line)
+        self.assertNotIn("Long", by_line)
+        self.assertNotIn("Link", by_line)
+
+    def test_separately_strong_weekday_and_block_are_not_combined(self):
+        long = "x" * 210
+        posts = _time_posts([
+            ("Tuesday", 8, 3000, long),
+            ("Tuesday", 10, 3000, long),
+            ("Tuesday", 16, 3000, long),
+            ("Tuesday", 19, 3000, long),
+            ("Tuesday", 13, 3000, long),
+            ("Friday", 13, 400, long),
+            ("Friday", 13, 400, long),
+            ("Friday", 14, 400, long),
+            ("Friday", 14, 400, long),
+        ])
+        times = ca.posting_times(posts)
+        self.assertEqual(times["best_weekday"]["weekday"], "Tuesday")
+        self.assertGreaterEqual(times["best_weekday"]["posts"], 4)
+        self.assertEqual(times["best_block"]["label"], "13:00-15:00")
+        self.assertGreaterEqual(times["best_block"]["posts"], 4)
+        self.assertEqual(times["sample_posts"], 1)
+        phrase = ca.best_time_phrase(times)
+        self.assertEqual(
+            phrase,
+            "Tuesday (5 posts) or 13:00-15:00 (5 posts), "
+            "not enough posts in both to combine",
+        )
+        self.assertNotIn("Tuesday 13:00-15:00", phrase)
+        self.assertNotIn("1 posts", phrase)
+        self.assertEqual(ca._count_note(1), "(1 post, small sample)")
+        by_type = {row["type"]: row for row in times["by_type"]}
+        self.assertIn("long", by_type)
+        self.assertEqual(by_type["long"]["sample_posts"], 1)
+        self.assertIn("or", ca.best_time_phrase(by_type["long"]))
+        text = ca.render_markdown(_times_report(times))
+        self.assertIn(
+            "Best time to post: Tuesday (5 posts) or 13:00-15:00 (5 posts), "
+            "not enough posts in both to combine.",
+            text,
+        )
+        self.assertIn("Long Tuesday (5 posts) or 13:00-15:00 (5 posts)", text)
 
 
 class FunnelTest(unittest.TestCase):

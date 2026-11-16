@@ -219,5 +219,103 @@ class ReportCliTest(unittest.TestCase):
         self.assertEqual(doc["scorecard"]["totals"]["impressions"]["this"], 9100)
 
 
+CONTENT_HEADER = (
+    "Post id,Date,Post text,Post Link,Impressions,Likes,Engagements,Bookmarks,"
+    "Shares,New follows,Replies,Reposts,Profile visits,Detail Expands,"
+    "URL Clicks,Hashtag Clicks,Permalink Clicks"
+)
+OVERVIEW_HEADER = (
+    "Date,Impressions,Likes,Engagements,Bookmarks,Shares,New follows,"
+    "Unfollows,Replies,Reposts,Profile visits,Create Post,Video views,Media views"
+)
+OVERLAP_DATE = '"Wed, Nov 11, 2026"'
+OVERLAP_ID = "2120660341355446282"
+OLDER_ONLY_ID = "2121370017592246293"
+
+
+def _write_csv(folder, name, header, rows, mtime):
+    path = os.path.join(folder, name)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(header + "\n" + "\n".join(rows) + "\n")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def _content_row(post_id, text, impressions, follows):
+    return (
+        f"{post_id},{OVERLAP_DATE},{text},https://x.com/c/status/{post_id},"
+        f"{impressions},1,1,0,0,{follows},0,0,0,0,0,0,0"
+    )
+
+
+def overlap_exports(content_3m_mtime=1_700_000_000, content_7d_mtime=1_700_000_100):
+    folder = tempfile.mkdtemp(prefix="xn-overlap-")
+    _write_csv(
+        folder, "content_3m.csv", CONTENT_HEADER,
+        [
+            _content_row(OVERLAP_ID, "stale 3m", 99999, 0),
+            _content_row(OLDER_ONLY_ID, "3m only", 40, 0),
+        ],
+        content_3m_mtime,
+    )
+    _write_csv(
+        folder, "content_7d.csv", CONTENT_HEADER,
+        [_content_row(OVERLAP_ID, "fresh 7d", 100, 9)],
+        content_7d_mtime,
+    )
+    _write_csv(
+        folder, "overview_3m.csv", OVERVIEW_HEADER,
+        [f"{OVERLAP_DATE},70,0,0,0,0,0,0,0,0,0,0,0,0"],
+        content_3m_mtime,
+    )
+    _write_csv(
+        folder, "overview_7d.csv", OVERVIEW_HEADER,
+        [f"{OVERLAP_DATE},6993,0,0,0,0,0,0,0,0,0,0,0,0"],
+        content_7d_mtime,
+    )
+    return folder
+
+
+class OverlapExportsTest(unittest.TestCase):
+    def test_keeps_row_from_newest_file_not_sorted_name(self):
+        folder = overlap_exports()
+        data = ca.load_exports(folder)
+        posts = data["content"].set_index("post_id")
+        self.assertEqual(int(posts.loc[OVERLAP_ID, "impressions"]), 100)
+        self.assertEqual(int(posts.loc[OVERLAP_ID, "new_follows"]), 9)
+        self.assertEqual(posts.loc[OVERLAP_ID, "text"], "fresh 7d")
+        self.assertEqual(int(posts.loc[OLDER_ONLY_ID, "impressions"]), 40)
+        self.assertEqual(int(data["overview"].iloc[0]["impressions"]), 6993)
+        card = ca.scorecard(data["overview"], data["content"])
+        self.assertEqual(card["posts"]["impressions"]["top"][0]["text"], "fresh 7d")
+        self.assertEqual(card["posts"]["impressions"]["top"][0]["impressions"], 100)
+        self.assertEqual(card["totals"]["impressions"]["this"], 6993)
+
+    def test_newer_3m_file_wins_when_it_is_the_latest_export(self):
+        folder = overlap_exports(content_3m_mtime=1_700_000_200, content_7d_mtime=1_700_000_100)
+        data = ca.load_exports(folder)
+        row = data["content"].set_index("post_id").loc[OVERLAP_ID]
+        self.assertEqual(int(row["impressions"]), 99999)
+        self.assertEqual(int(data["overview"].iloc[0]["impressions"]), 70)
+
+
+class BlankPostIdTest(unittest.TestCase):
+    def test_skips_blank_and_non_numeric_ids_without_mangling_digits(self):
+        folder = tempfile.mkdtemp(prefix="xn-blank-id-")
+        _write_csv(
+            folder, "content_7d.csv", CONTENT_HEADER,
+            [
+                _content_row("", "blank row", 10, 0),
+                _content_row("not-an-id", "junk", 11, 0),
+                _content_row(OVERLAP_ID, "ok", 100, 9),
+            ],
+            1_700_000_100,
+        )
+        posts = ca.load_content(folder)
+        self.assertEqual(list(posts["post_id"]), [OVERLAP_ID])
+        self.assertNotIn("e+", str(posts.iloc[0]["post_id"]).lower())
+        self.assertEqual(ca.snowflake_utc(posts.iloc[0]["post_id"]).tzinfo, timezone.utc)
+
+
 if __name__ == "__main__":
     unittest.main()

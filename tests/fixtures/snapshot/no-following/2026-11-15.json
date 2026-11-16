@@ -1,0 +1,35 @@
+[
+  {
+    "id": "901",
+    "username": "ada_vale",
+    "name": "Ada Vale",
+    "verified": true,
+    "verified_type": "blue",
+    "subscription_type": "Premium",
+    "public_metrics": {"followers_count": 52, "following_count": 10, "tweet_count": 5},
+    "created_at": "2019-03-01T00:00:00.000Z",
+    "description": "Fictional neighbour. Not a real account."
+  },
+  {
+    "id": "902",
+    "username": "ben_marsh",
+    "name": "Ben Marsh",
+    "verified": false,
+    "verified_type": "",
+    "subscription_type": "",
+    "public_metrics": {"followers_count": 20, "following_count": 12, "tweet_count": 3},
+    "created_at": "2020-04-02T00:00:00.000Z",
+    "description": "Fictional neighbour. Not a real account."
+  },
+  {
+    "id": "903",
+    "username": "cara_noll",
+    "name": "Cara Noll",
+    "verified": true,
+    "verified_type": "blue",
+    "subscription_type": "Premium",
+    "public_metrics": {"followers_count": 30, "following_count": 9, "tweet_count": 2},
+    "created_at": "2021-05-03T00:00:00.000Z",
+    "description": "Only in the newest follower snapshot."
+  }
+]

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "901",
+    "username": "ada_vale",
+    "name": "Ada Vale",
+    "verified": true,
+    "verified_type": "blue",
+    "subscription_type": "Premium",
+    "public_metrics": {"followers_count": 50, "following_count": 10, "tweet_count": 4},
+    "created_at": "2019-03-01T00:00:00.000Z",
+    "description": "Fictional neighbour. Not a real account."
+  },
+  {
+    "id": "905",
+    "username": "eve_old",
+    "name": "Eve Old",
+    "verified": false,
+    "verified_type": "",
+    "subscription_type": "",
+    "public_metrics": {"followers_count": 8, "following_count": 3, "tweet_count": 1},
+    "created_at": "2024-01-05T00:00:00.000Z",
+    "description": "Only in the older follower snapshot."
+  }
+]

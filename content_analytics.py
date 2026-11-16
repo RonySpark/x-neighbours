@@ -7,13 +7,16 @@ ignored.
 
 Usage:
   python3 content_analytics.py --exports <dir> --out <dir> [--json] [--data <dir>]
+  python3 content_analytics.py --exports <dir> --post-follows-csv PATH [--review-log PATH]
 """
 import argparse
+import csv
 import glob
 import json
 import os
 import re
 import sys
+import tempfile
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -44,6 +47,7 @@ CONTENT_COLUMNS = {
     "New follows": "new_follows",
     "Replies": "replies",
     "Reposts": "reposts",
+    "Quotes": "quotes",
     "Profile visits": "profile_visits",
     "Detail Expands": "detail_expands",
     "URL Clicks": "url_clicks",
@@ -52,8 +56,8 @@ CONTENT_COLUMNS = {
 }
 CONTENT_COUNTS = [
     "impressions", "likes", "engagements", "bookmarks", "shares", "new_follows",
-    "replies", "reposts", "profile_visits", "detail_expands", "url_clicks",
-    "hashtag_clicks", "permalink_clicks",
+    "replies", "reposts", "quotes", "profile_visits", "detail_expands",
+    "url_clicks", "hashtag_clicks", "permalink_clicks",
 ]
 OVERVIEW_COLUMNS = {
     "Date": "date_raw",
@@ -888,6 +892,120 @@ def write_report(report, out_dir, write_json=False):
     return paths
 
 
+def export_mtime(folder):
+    """UTC time of the newest content_*.csv, used as Analytics export time."""
+    paths = csv_paths(folder, "content")
+    if not paths:
+        raise SystemExit(f"no content_*.csv in {folder}")
+    return datetime.fromtimestamp(os.path.getmtime(paths[0]), tz=timezone.utc)
+
+
+def status_id_from_url(url):
+    """Status id from a post URL, ignoring query strings and trailing slashes."""
+    text = str(url or "").strip().split("?")[0].split("#")[0].rstrip("/")
+    match = re.search(r"/status/(\d+)", text)
+    return match.group(1) if match else ""
+
+
+def _int_count(row, key):
+    try:
+        value = row[key]
+    except (KeyError, IndexError):
+        return 0
+    if pd.isna(value):
+        return 0
+    return int(value)
+
+
+def post_follows_rows(posts, exported_at):
+    """One row per post. New follows is X's count as of export, not strictly 48h."""
+    include_quotes = posts is not None and not posts.empty and "quotes" in posts.columns
+    rows = []
+    if posts is None or posts.empty:
+        return rows, include_quotes
+    for _, post in posts.iterrows():
+        age = (exported_at - post["posted_at"]).total_seconds() / 3600.0
+        pid = str(post["post_id"])
+        row = {
+            "post_id": pid,
+            "post_url": f"https://x.com/ronyspark/status/{pid}",
+            "posted_at_adelaide": post["adelaide_at"].isoformat(timespec="seconds"),
+            "age_hours_at_export": round(age, 2),
+            "impressions": _int_count(post, "impressions"),
+            "profile_visits": _int_count(post, "profile_visits"),
+            "new_follows": _int_count(post, "new_follows"),
+            "replies": _int_count(post, "replies"),
+            "likes": _int_count(post, "likes"),
+            "reposts": _int_count(post, "reposts"),
+            "follows_window_note": "within_48h" if age <= 48 else "lifetime_to_export",
+        }
+        if include_quotes:
+            row["quotes"] = _int_count(post, "quotes")
+        rows.append(row)
+    return rows, include_quotes
+
+
+def post_follows_fieldnames(include_quotes):
+    cols = [
+        "post_id", "post_url", "posted_at_adelaide", "age_hours_at_export",
+        "impressions", "profile_visits", "new_follows", "replies",
+    ]
+    if include_quotes:
+        cols.append("quotes")
+    cols.extend(["likes", "reposts", "follows_window_note"])
+    return cols
+
+
+def write_csv_atomic(path, fieldnames, rows):
+    dest = os.path.abspath(path)
+    folder = os.path.dirname(dest) or "."
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".csv", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_post_follows_csv(path, posts, exported_at):
+    """Write the per-post follows CSV for the content bot's 48-hour review."""
+    rows, include_quotes = post_follows_rows(posts, exported_at)
+    write_csv_atomic(path, post_follows_fieldnames(include_quotes), rows)
+    return path
+
+
+def fill_review_log(path, posts, exported_at):
+    """Fill or overwrite follows_48h on an existing CSV, matching post_url on status id.
+
+    Only posts aged <= 72h at export get a number; older or unmatched rows are blank.
+    Other columns and row order are preserved. Writes via a temp file then rename.
+    """
+    follows = {}
+    if posts is not None and not posts.empty:
+        for _, post in posts.iterrows():
+            age = (exported_at - post["posted_at"]).total_seconds() / 3600.0
+            pid = str(post["post_id"])
+            follows[pid] = str(_int_count(post, "new_follows")) if age <= 72 else ""
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if "follows_48h" not in fieldnames:
+        fieldnames.append("follows_48h")
+    for row in rows:
+        row["follows_48h"] = follows.get(status_id_from_url(row.get("post_url", "")), "")
+    write_csv_atomic(path, fieldnames, rows)
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Weekly content analytics from X Analytics CSV exports. No X API calls.")
@@ -896,12 +1014,29 @@ def main():
     parser.add_argument("--json", action="store_true", help="also write what_worked_week.json")
     parser.add_argument("--config", help="optional config.json for keyword_tags")
     parser.add_argument("--data", help="optional folder of saved X JSON; skip follower share if omitted")
+    parser.add_argument(
+        "--post-follows-csv",
+        help="write one row per post for the 48-hour review",
+    )
+    parser.add_argument(
+        "--review-log",
+        help="fill follows_48h on an existing CSV by post_url status id",
+    )
     args = parser.parse_args()
     report = analyze(
         args.exports, load_keywords(args.config),
         data_dir=args.data, me_id=load_me_id(args.config, args.data),
     )
     paths = write_report(report, args.out, args.json)
+    if args.post_follows_csv or args.review_log:
+        posts = load_content(args.exports)
+        when = export_mtime(args.exports)
+        if args.post_follows_csv:
+            write_post_follows_csv(args.post_follows_csv, posts, when)
+            paths["post_follows_csv"] = args.post_follows_csv
+        if args.review_log:
+            fill_review_log(args.review_log, posts, when)
+            paths["review_log"] = args.review_log
     print(json.dumps(paths, ensure_ascii=False))
     return 0
 

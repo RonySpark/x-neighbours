@@ -24,7 +24,7 @@ Every report has four parts, written so a phone can read them without sideways s
 
 ## Setup
 
-Python 3.9 or newer, and [Pillow](https://pypi.org/project/Pillow/).
+Python 3.9 or newer, [Pillow](https://pypi.org/project/Pillow/), and [pandas](https://pypi.org/project/pandas/).
 
 ```bash
 git clone https://github.com/Skybatan/x-neighbours.git
@@ -103,6 +103,7 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `windows` | `week` by default. `day` is the daily report |
 | `top` | How many people are ranked for Flowers and for Catch up when the good neighbours list is empty. The chat still shows five at a time. Default 10 |
 | `timezone` | IANA name for the thank-you date, such as `Europe/Stockholm`. Blank means UTC |
+| `keyword_tags` | Words used to group posts in content analytics. Default `Tesla` and `Adelaide` |
 | `fresh_hours` | Optional. How many hours until the bot may offer a new report. Omit it and the bot estimates: 1 hour at 60 or more interactions a day, 3 hours from 15 to 59, 8 hours under 15 |
 | `good_neighbours` | Optional path to the personal list. Prefer `--good-neighbours`, because the file lives outside the repo. A missing file is an empty list. At most 20 people |
 | `report` | `both` (default), `likes`, or `replies` |
@@ -217,11 +218,21 @@ Saved JSON under `tests/fixtures/offline/` is enough. No X calls:
 python3 -m unittest discover -s tests -v
 ```
 
-`tests/test_offline_report.py` runs a week report end to end and checks that every output file is written (markdown, picture, `more.json`, thanks, `state.json`, `open_items.csv`) and that waiting replies are counted once per person. `tests/test_chat_format.py` checks the chat layout against `examples/few`.
+`tests/test_offline_report.py` runs a week report end to end and checks that every output file is written (markdown, picture, `more.json`, thanks, `state.json`, `open_items.csv`) and that waiting replies are counted once per person. `tests/test_chat_format.py` checks the chat layout against `examples/few`. Content analytics uses fictional CSVs under `tests/fixtures/analytics/`.
+
+## Content analytics
+
+A separate read-only script turns X Analytics CSV exports into a short Sunday paste-in. It does not call X. Put `content_*.csv` and `overview_*.csv` in a folder:
+
+```bash
+python3 content_analytics.py --exports ~/exports --out . --json
+```
+
+That writes `what_worked_week.md` and, with `--json`, `what_worked_week.json`. Optional `--config config.json` picks up `keyword_tags` (Tesla and Adelaide if you leave them out). Real exports and the generated files are gitignored.
 
 ## Privacy
 
-- `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `open_items.csv`, and a `good_neighbours.json` or `state.json` copied into the repo root are gitignored. Leave them that way. The real list and the report clock belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked.
+- `config.json`, `data/`, `exports/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `open_items.csv`, `what_worked_*.md`, `what_worked_*.json`, and a `good_neighbours.json` or `state.json` copied into the repo root are gitignored. Leave them that way. The real list and the report clock belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked.
 - Real avatars are downloaded from the `profile_image_url` values in the saved JSON into `.avatar_cache/` next to the output folder.
 - Do not commit a creator's config, raw responses, avatar cache, reports, or pictures, and do not open a pull request that contains them.
 - The sample dataset is the only account data in this repo, and it is not from X.
@@ -231,6 +242,7 @@ python3 -m unittest discover -s tests -v
 | Path | Role |
 |---|---|
 | `x_neighbours.py` | Reports and pictures |
+| `content_analytics.py` | Weekly “What worked” section from Analytics CSVs |
 | `good_neighbours.py` | Add, remove, or list the personal good neighbours file |
 | `report_state.py` | Read or update the freshness clock in the bot store |
 | `feedback_link.py` | Build a prefilled GitHub issue link. It does not post the issue |

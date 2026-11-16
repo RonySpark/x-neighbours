@@ -3,12 +3,15 @@ config.json
 
 # Raw X responses, downloaded avatars, and files the script writes.
 data/
+exports/
 .avatar_cache/
 report_*.md
 report_*.json
 report_*.png
 x_neighbours_*.png
 open_items.csv
+what_worked_*.md
+what_worked_*.json
 
 # Personal files copied into the working tree. The fictional example stays tracked.
 /good_neighbours.json

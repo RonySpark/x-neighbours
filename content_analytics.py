@@ -1,0 +1,713 @@
+#!/usr/bin/env python3
+"""Content analytics from X Analytics CSV exports. No X API calls.
+
+Reads content_*.csv and overview_*.csv from an exports folder. Post time is
+not in the CSV; it is decoded from the Post id snowflake. Video exports are
+ignored.
+
+Usage:
+  python3 content_analytics.py --exports <dir> --out <dir> [--json]
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+import pandas as pd
+
+import x_neighbours as xn
+
+
+TWITTER_EPOCH_MS = 1288834974657
+ADELAIDE = ZoneInfo("Australia/Adelaide")
+DEFAULT_KEYWORDS = ["Tesla", "Adelaide"]
+MIN_TYPE_POSTS = 3
+SHORT_MAX = 80
+MEDIUM_MAX = 200
+
+CONTENT_COLUMNS = {
+    "Post id": "post_id",
+    "Date": "date_raw",
+    "Post text": "text",
+    "Post Link": "link",
+    "Impressions": "impressions",
+    "Likes": "likes",
+    "Engagements": "engagements",
+    "Bookmarks": "bookmarks",
+    "Shares": "shares",
+    "New follows": "new_follows",
+    "Replies": "replies",
+    "Reposts": "reposts",
+    "Profile visits": "profile_visits",
+    "Detail Expands": "detail_expands",
+    "URL Clicks": "url_clicks",
+    "Hashtag Clicks": "hashtag_clicks",
+    "Permalink Clicks": "permalink_clicks",
+}
+CONTENT_COUNTS = [
+    "impressions", "likes", "engagements", "bookmarks", "shares", "new_follows",
+    "replies", "reposts", "profile_visits", "detail_expands", "url_clicks",
+    "hashtag_clicks", "permalink_clicks",
+]
+OVERVIEW_COLUMNS = {
+    "Date": "date_raw",
+    "Impressions": "impressions",
+    "Likes": "likes",
+    "Engagements": "engagements",
+    "Bookmarks": "bookmarks",
+    "Shares": "shares",
+    "New follows": "new_follows",
+    "Unfollows": "unfollows",
+    "Replies": "replies",
+    "Reposts": "reposts",
+    "Profile visits": "profile_visits",
+    "Create Post": "create_post",
+    "Video views": "video_views",
+    "Media views": "media_views",
+}
+OVERVIEW_COUNTS = [
+    "impressions", "likes", "engagements", "bookmarks", "shares", "new_follows",
+    "unfollows", "replies", "reposts", "profile_visits", "create_post",
+    "video_views", "media_views",
+]
+
+
+def parse_export_date(value):
+    """Parse 'Mon, Nov 16, 2026' as a UTC calendar day."""
+    if pd.isna(value):
+        return pd.NaT
+    text = str(value).strip()
+    if not text:
+        return pd.NaT
+    return datetime.strptime(text, "%a, %b %d, %Y").replace(tzinfo=timezone.utc)
+
+
+def snowflake_utc(post_id):
+    """UTC time encoded in a post id. ms = (id >> 22) + 1288834974657."""
+    ms = (int(post_id) >> 22) + TWITTER_EPOCH_MS
+    return xn.ts(datetime.fromtimestamp(ms / 1000, tz=timezone.utc))
+
+
+def csv_paths(folder, prefix):
+    return sorted(glob.glob(os.path.join(folder, f"{prefix}_*.csv")))
+
+
+def to_counts(frame, columns):
+    for col in columns:
+        if col not in frame.columns:
+            frame[col] = 0
+            continue
+        values = frame[col].astype(str).str.replace(",", "", regex=False)
+        frame[col] = pd.to_numeric(values, errors="coerce").fillna(0)
+    return frame
+
+
+def read_tables(paths, rename, counts):
+    frames = []
+    for path in paths:
+        frame = pd.read_csv(path, encoding="utf-8-sig")
+        frame = frame.rename(columns={key: rename[key] for key in rename if key in frame.columns})
+        wanted = [col for col in rename.values() if col in frame.columns]
+        frame = frame[wanted].copy()
+        frame = to_counts(frame, [col for col in counts if col in frame.columns])
+        if "date_raw" in frame.columns:
+            when = frame["date_raw"].map(parse_export_date)
+            frame["date"] = pd.to_datetime(when, utc=True).dt.date
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def load_content(folder):
+    paths = csv_paths(folder, "content")
+    if not paths:
+        return pd.DataFrame(columns=list(CONTENT_COLUMNS.values()))
+    posts = read_tables(paths, CONTENT_COLUMNS, CONTENT_COUNTS)
+    if posts.empty:
+        return posts
+    posts["post_id"] = posts["post_id"].astype(str)
+    posts["text"] = posts["text"].fillna("").astype(str)
+    posts["link"] = posts["link"].fillna("").astype(str)
+    posts = posts.drop_duplicates(subset=["post_id"], keep="first")
+    posted = posts["post_id"].map(snowflake_utc)
+    posts["posted_at"] = posted
+    adelaide = posted.map(lambda when: when.astimezone(ADELAIDE))
+    posts["adelaide_at"] = adelaide
+    posts["adelaide_date"] = adelaide.map(lambda when: when.date())
+    posts["adelaide_hour"] = adelaide.map(lambda when: when.hour)
+    posts["adelaide_weekday"] = adelaide.map(lambda when: when.strftime("%A"))
+    impressions = posts["impressions"]
+    engagements = posts["engagements"]
+    posts["engagement_rate"] = (engagements / impressions).where(impressions > 0, 0.0)
+    return posts
+
+
+def load_overview(folder):
+    paths = csv_paths(folder, "overview")
+    if not paths:
+        return pd.DataFrame(columns=list(OVERVIEW_COLUMNS.values()))
+    daily = read_tables(paths, OVERVIEW_COLUMNS, OVERVIEW_COUNTS)
+    if daily.empty:
+        return daily
+    daily = daily.dropna(subset=["date"])
+    daily = daily.drop_duplicates(subset=["date"], keep="first")
+    return daily.sort_values("date").reset_index(drop=True)
+
+
+def load_exports(folder):
+    """Load content and overview CSVs. Other files in the folder are left alone."""
+    if not os.path.isdir(folder):
+        raise SystemExit(f"exports folder not found: {folder}")
+    content = load_content(folder)
+    overview = load_overview(folder)
+    if content.empty and overview.empty:
+        raise SystemExit(f"no content_*.csv or overview_*.csv in {folder}")
+    return {"content": content, "overview": overview}
+
+
+def clip_text(text, n=72):
+    one = " ".join(str(text or "").split())
+    return one if len(one) <= n else one[: n - 3] + "..."
+
+
+def latest_export_date(overview, content):
+    dates = []
+    if overview is not None and not overview.empty:
+        dates.append(max(overview["date"]))
+    if content is not None and not content.empty:
+        dates.append(max(content["date"]))
+    if not dates:
+        raise SystemExit("exports have no dates")
+    return max(dates)
+
+
+def week_windows(end):
+    """This week is `end` and the six UTC days before it. Previous is the seven before that."""
+    this_start = end - timedelta(days=6)
+    prev_end = this_start - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=6)
+    return (this_start, end), (prev_start, prev_end)
+
+
+def in_days(frame, start, end, column="date"):
+    if frame is None or frame.empty:
+        return frame
+    return frame[(frame[column] >= start) & (frame[column] <= end)].copy()
+
+
+def sum_counts(frame, columns):
+    if frame is None or frame.empty:
+        return {col: 0 for col in columns}
+    return {col: int(frame[col].sum()) if col in frame.columns else 0 for col in columns}
+
+
+def change(this, previous):
+    delta = this - previous
+    pct = None if previous == 0 else delta / previous
+    return {"this": this, "previous": previous, "change": delta, "pct": pct}
+
+
+def post_ref(row):
+    return {
+        "post_id": str(row["post_id"]),
+        "text": clip_text(row.get("text", "")),
+        "link": str(row.get("link", "") or ""),
+        "impressions": int(row["impressions"]),
+        "engagements": int(row["engagements"]),
+        "engagement_rate": float(row["engagement_rate"]),
+        "new_follows": int(row["new_follows"]),
+        "detail_expands": int(row.get("detail_expands", 0) or 0),
+        "profile_visits": int(row.get("profile_visits", 0) or 0),
+    }
+
+
+def ranked_posts(posts, column, n=3):
+    if posts is None or posts.empty:
+        return [], []
+    high = posts.sort_values(column, ascending=False)
+    low = posts.sort_values(column, ascending=True)
+    top = [post_ref(row) for _, row in high.head(n).iterrows()]
+    bottom = [post_ref(row) for _, row in low.head(n).iterrows()]
+    return top, bottom
+
+
+def scorecard(overview, content):
+    """Last 7 UTC days vs the 7 days before, plus top and bottom posts."""
+    end = latest_export_date(overview, content)
+    this_span, prev_span = week_windows(end)
+    this_days = in_days(overview, *this_span)
+    prev_days = in_days(overview, *prev_span)
+    this_posts = in_days(content, *this_span)
+    prev_posts = in_days(content, *prev_span)
+    overview_keys = [
+        "impressions", "likes", "engagements", "bookmarks", "shares",
+        "new_follows", "unfollows", "replies", "reposts", "profile_visits",
+        "create_post", "video_views", "media_views",
+    ]
+    this_tot = sum_counts(this_days, overview_keys)
+    prev_tot = sum_counts(prev_days, overview_keys)
+    totals = {key: change(this_tot[key], prev_tot[key]) for key in overview_keys}
+    content_keys = ["detail_expands", "url_clicks", "hashtag_clicks", "permalink_clicks"]
+    this_extra = sum_counts(this_posts, content_keys)
+    prev_extra = sum_counts(prev_posts, content_keys)
+    extra = {key: change(this_extra[key], prev_extra[key]) for key in content_keys}
+    extra["posts"] = change(int(len(this_posts)), int(len(prev_posts)))
+    by = {}
+    for column in ("impressions", "engagement_rate", "new_follows"):
+        top, bottom = ranked_posts(this_posts, column)
+        by[column] = {"top": top, "bottom": bottom}
+    return {
+        "end": end.isoformat(),
+        "this_week": [this_span[0].isoformat(), this_span[1].isoformat()],
+        "previous_week": [prev_span[0].isoformat(), prev_span[1].isoformat()],
+        "totals": totals,
+        "from_content": extra,
+        "posts": by,
+    }
+
+
+def load_keywords(config_path=None):
+    if not config_path:
+        return list(DEFAULT_KEYWORDS)
+    with open(config_path, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    tags = cfg.get("keyword_tags") if isinstance(cfg, dict) else None
+    if not tags:
+        return list(DEFAULT_KEYWORDS)
+    return [str(tag) for tag in tags if str(tag).strip()]
+
+
+def classify_post(text, keywords=None):
+    """Labels from the post text. Media is omitted: the CSV does not mark it."""
+    text = text or ""
+    stripped = text.lstrip()
+    labels = []
+    if re.search(r"https?://|t\.co", text, re.I):
+        labels.append("link")
+    if re.match(r"\d+\s*/", stripped) or "🧵" in text:
+        labels.append("thread")
+    if stripped.startswith("@"):
+        labels.append("reply")
+    else:
+        labels.append("original")
+    if "?" in text:
+        labels.append("question")
+    length = len(text)
+    if length <= SHORT_MAX:
+        labels.append("short")
+    elif length <= MEDIUM_MAX:
+        labels.append("medium")
+    else:
+        labels.append("long")
+    lower = text.lower()
+    for word in keywords or DEFAULT_KEYWORDS:
+        if word and word.lower() in lower:
+            labels.append(word)
+    return labels
+
+
+def content_types(posts, keywords=None, min_posts=MIN_TYPE_POSTS):
+    """Median impressions and engagement rate per type, dropping types with few posts."""
+    keywords = keywords or DEFAULT_KEYWORDS
+    if posts is None or posts.empty:
+        return []
+    rows = []
+    for _, post in posts.iterrows():
+        for label in classify_post(post.get("text", ""), keywords):
+            rows.append({
+                "type": label,
+                "impressions": post["impressions"],
+                "engagement_rate": post["engagement_rate"],
+            })
+    if not rows:
+        return []
+    grouped = pd.DataFrame(rows).groupby("type")
+    out = []
+    for label, group in grouped:
+        if len(group) < min_posts:
+            continue
+        out.append({
+            "type": label,
+            "posts": int(len(group)),
+            "median_impressions": float(group["impressions"].median()),
+            "median_engagement_rate": float(group["engagement_rate"].median()),
+        })
+    out.sort(key=lambda row: (-row["median_engagement_rate"], -row["median_impressions"], row["type"]))
+    return out
+
+
+WEEKDAYS = [
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+]
+
+
+def hour_label(start, span=3):
+    return f"{start:02d}:00-{start + span - 1:02d}:00"
+
+
+def posting_times(posts):
+    """Median impressions by Adelaide weekday and hour, after dropping the top 5%."""
+    empty = {
+        "kept": 0,
+        "dropped": 0,
+        "cutoff": None,
+        "pivot": {},
+        "best_weekday": None,
+        "best_block": None,
+    }
+    if posts is None or posts.empty:
+        return empty
+    n_drop = max(1, int(len(posts) * 0.05))
+    ranked = posts.sort_values("impressions", ascending=False)
+    dropped_rows = ranked.iloc[:n_drop]
+    kept = ranked.iloc[n_drop:].copy()
+    dropped = int(len(dropped_rows))
+    cutoff = float(dropped_rows["impressions"].min()) if dropped else None
+    if kept.empty:
+        kept = posts.copy()
+        dropped = 0
+        cutoff = None
+    weekday_rows = []
+    for name, group in kept.groupby("adelaide_weekday"):
+        if len(group) < MIN_TYPE_POSTS:
+            continue
+        weekday_rows.append({
+            "weekday": name,
+            "posts": int(len(group)),
+            "median_impressions": float(group["impressions"].median()),
+            "median_engagement_rate": float(group["engagement_rate"].median()),
+        })
+    weekday_rows.sort(key=lambda row: (
+        -row["median_impressions"], WEEKDAYS.index(row["weekday"])
+        if row["weekday"] in WEEKDAYS else 99,
+    ))
+    blocks = []
+    for start in range(0, 22):
+        hours = {start, start + 1, start + 2}
+        group = kept[kept["adelaide_hour"].isin(hours)]
+        if len(group) < MIN_TYPE_POSTS:
+            continue
+        blocks.append({
+            "start_hour": start,
+            "end_hour": start + 2,
+            "label": hour_label(start),
+            "posts": int(len(group)),
+            "median_impressions": float(group["impressions"].median()),
+            "median_engagement_rate": float(group["engagement_rate"].median()),
+        })
+    blocks.sort(key=lambda row: (-row["median_impressions"], row["start_hour"]))
+    pivot = {}
+    for name, group in kept.groupby("adelaide_weekday"):
+        hours = {
+            str(int(hour)): float(part["impressions"].median())
+            for hour, part in group.groupby("adelaide_hour")
+        }
+        pivot[name] = hours
+    return {
+        "kept": int(len(kept)),
+        "dropped": dropped,
+        "cutoff": cutoff,
+        "pivot": pivot,
+        "best_weekday": weekday_rows[0] if weekday_rows else None,
+        "best_block": blocks[0] if blocks else None,
+    }
+
+
+def ratio(num, den):
+    if not den:
+        return 0.0
+    return float(num) / float(den)
+
+
+def funnel_stats(posts):
+    if posts is None or posts.empty:
+        return {
+            "posts": 0,
+            "impressions": 0,
+            "detail_expands": 0,
+            "profile_visits": 0,
+            "new_follows": 0,
+            "expand_rate": 0.0,
+            "visit_rate": 0.0,
+            "follow_rate": 0.0,
+        }
+    impressions = int(posts["impressions"].sum())
+    expands = int(posts["detail_expands"].sum())
+    visits = int(posts["profile_visits"].sum())
+    follows = int(posts["new_follows"].sum())
+    return {
+        "posts": int(len(posts)),
+        "impressions": impressions,
+        "detail_expands": expands,
+        "profile_visits": visits,
+        "new_follows": follows,
+        "expand_rate": ratio(expands, impressions),
+        "visit_rate": ratio(visits, expands),
+        "follow_rate": ratio(follows, visits),
+    }
+
+
+def funnel(posts, keywords=None):
+    """Impressions → detail expands → profile visits → new follows."""
+    keywords = keywords or DEFAULT_KEYWORDS
+    if posts is None or posts.empty:
+        return {"overall": funnel_stats(posts), "by_type": [], "top_follows": []}
+    overall = funnel_stats(posts)
+    by_type = []
+    labels = set()
+    classified = []
+    for _, post in posts.iterrows():
+        tags = classify_post(post.get("text", ""), keywords)
+        classified.append(tags)
+        labels.update(tags)
+    for label in labels:
+        mask = [label in tags for tags in classified]
+        subset = posts[mask]
+        if len(subset) < MIN_TYPE_POSTS:
+            continue
+        stats = funnel_stats(subset)
+        stats["type"] = label
+        by_type.append(stats)
+    by_type.sort(key=lambda row: (-row["follow_rate"], -row["new_follows"], row["type"]))
+    top, _bottom = ranked_posts(posts, "new_follows")
+    return {"overall": overall, "by_type": by_type, "top_follows": top}
+
+
+def is_original(text):
+    return "original" in classify_post(text, [])
+
+
+def posting_streak(posts):
+    """Consecutive Adelaide days with at least one original post, ending at the latest."""
+    if posts is None or posts.empty:
+        return {"days": 0, "until": None}
+    originals = posts[posts["text"].map(is_original)]
+    if originals.empty:
+        return {"days": 0, "until": None}
+    days = set(originals["adelaide_date"].tolist())
+    latest = max(days)
+    cursor = latest
+    streak = 0
+    while cursor in days:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return {"days": streak, "until": latest.isoformat()}
+
+
+def pick_examples(posts):
+    """Do-more: best engagement rate among posts above median impressions."""
+    if posts is None or posts.empty:
+        return {"do_more": None, "underperformer": None, "median_impressions": None}
+    median_imp = float(posts["impressions"].median())
+    notable = posts[posts["impressions"] > median_imp]
+    if notable.empty:
+        notable = posts
+    best = notable.sort_values("engagement_rate", ascending=False).iloc[0]
+    worst = notable.sort_values("engagement_rate", ascending=True).iloc[0]
+    do_more = post_ref(best)
+    under = post_ref(worst)
+    if do_more["post_id"] == under["post_id"]:
+        under = None
+    return {
+        "do_more": do_more,
+        "underperformer": under,
+        "median_impressions": median_imp,
+    }
+
+
+def consistency(overview, content):
+    end = latest_export_date(overview, content)
+    this_span, prev_span = week_windows(end)
+    this_posts = in_days(content, *this_span)
+    prev_posts = in_days(content, *prev_span)
+    window_days = (this_span[1] - this_span[0]).days + 1
+    posts_this = int(len(this_posts)) if this_posts is not None else 0
+    posts_prev = int(len(prev_posts)) if prev_posts is not None else 0
+    examples = pick_examples(this_posts)
+    return {
+        "streak": posting_streak(content),
+        "window_days": window_days,
+        "posts_per_day": posts_this / window_days if window_days else 0.0,
+        "posts": change(posts_this, posts_prev),
+        "do_more": examples["do_more"],
+        "underperformer": examples["underperformer"],
+        "median_impressions": examples["median_impressions"],
+    }
+
+
+def analyze(folder, keywords=None):
+    keywords = keywords or DEFAULT_KEYWORDS
+    data = load_exports(folder)
+    overview, content = data["overview"], data["content"]
+    card = scorecard(overview, content)
+    start = datetime.fromisoformat(card["this_week"][0]).date()
+    end = datetime.fromisoformat(card["this_week"][1]).date()
+    this_posts = in_days(content, start, end)
+    return {
+        "keywords": list(keywords),
+        "scorecard": card,
+        "types": content_types(this_posts, keywords),
+        "times": posting_times(this_posts),
+        "funnel": funnel(this_posts, keywords),
+        "consistency": consistency(overview, content),
+    }
+
+
+def json_ready(value):
+    if isinstance(value, dict):
+        return {str(key): json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_ready(item) for item in value]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        return json_ready(value.item())
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def fmt_change(item):
+    if not item or item.get("previous") == 0:
+        return "from nothing last week" if item and item.get("this") else "same as last week"
+    pct = item.get("pct")
+    if not pct:
+        return "same as last week"
+    if pct > 0:
+        return f"up {pct:.0%}"
+    return f"down {abs(pct):.0%}"
+
+
+def fmt_rate(value):
+    pct = (value or 0) * 100
+    if pct >= 10:
+        return f"{pct:.0f}%"
+    if pct >= 1:
+        return f"{pct:.1f}%"
+    return f"{pct:.2f}%"
+
+
+def short_span(start, end):
+    a = datetime.fromisoformat(start)
+    b = datetime.fromisoformat(end)
+    if a.month == b.month and a.year == b.year:
+        return f"{a.day}–{b.day} {a.strftime('%b')}"
+    return f"{a.day} {a.strftime('%b')}–{b.day} {b.strftime('%b')}"
+
+
+def quoted(post):
+    if not post:
+        return ""
+    return '"' + post["text"] + '"'
+
+
+def render_markdown(report):
+    """Short paste-in section for the Sunday report. Aim for about 15 lines."""
+    card = report["scorecard"]
+    types = report["types"]
+    times = report["times"]
+    funnel_data = report["funnel"]
+    cons = report["consistency"]
+    totals = card["totals"]
+    lines = ["## What worked this week", ""]
+    lines.append(
+        f"{short_span(*card['this_week'])} vs {short_span(*card['previous_week'])}. "
+        f"Impressions {xn.fmt_num(totals['impressions']['this'])} ({fmt_change(totals['impressions'])}). "
+        f"New follows {xn.fmt_num(totals['new_follows']['this'])} ({fmt_change(totals['new_follows'])}). "
+        f"{cons['posts']['this']} posts, {cons['posts_per_day']:.1f} a day "
+        f"(was {cons['posts']['previous']} last week)."
+    )
+    lines.append("")
+    top_imp = (card["posts"]["impressions"]["top"] or [None])[0]
+    top_fol = (card["posts"]["new_follows"]["top"] or [None])[0]
+    quiet = (card["posts"]["impressions"]["bottom"] or [None])[0]
+    if top_imp:
+        lines.append(
+            f"Best reach: {quoted(top_imp)} — {xn.fmt_num(top_imp['impressions'])} impressions.")
+    if top_fol:
+        lines.append(
+            f"Best follows: {quoted(top_fol)} — {top_fol['new_follows']} new follows.")
+    if quiet:
+        lines.append(
+            f"Quietest: {quoted(quiet)} — {xn.fmt_num(quiet['impressions'])} impressions.")
+    lines.append("")
+    def pretty_type(name):
+        return name if name[:1].isupper() else name.capitalize()
+
+    lead = [pretty_type(row["type"]) for row in types[:2]]
+    if len(lead) >= 2:
+        type_bit = f"{lead[0]} and {lead[1]} posts had the strongest median engagement."
+    elif lead:
+        type_bit = f"{lead[0]} posts had the strongest median engagement."
+    else:
+        type_bit = "No content type had three posts this week."
+    lines.append(
+        type_bit
+        + " Types with fewer than 3 posts are left out. Media is skipped because the CSV does not mark it."
+    )
+    weekday = (times.get("best_weekday") or {}).get("weekday")
+    block = times.get("best_block") or {}
+    if weekday and block:
+        lines.append(
+            f"Best time to post: {weekday}, especially {block.get('label', '')} Adelaide, "
+            "after dropping the loudest 5% of posts."
+        )
+    elif weekday:
+        lines.append(f"Best weekday to post: {weekday} Adelaide.")
+    overall = funnel_data["overall"]
+    lines.append(
+        f"Funnel: {fmt_rate(overall['expand_rate'])} of impressions opened the post, "
+        f"{fmt_rate(overall['visit_rate'])} of those visited the profile, "
+        f"{fmt_rate(overall['follow_rate'])} of visits followed."
+    )
+    streak = cons["streak"]
+    lines.append(
+        f"Streak: {streak['days']} Adelaide days in a row with an original post."
+    )
+    lines.append("")
+    if cons.get("do_more"):
+        lines.append(f"Do more of this: {quoted(cons['do_more'])}.")
+    if cons.get("underperformer"):
+        lines.append(f"Ease off: {quoted(cons['underperformer'])}.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_report(report, out_dir, write_json=False):
+    os.makedirs(out_dir, exist_ok=True)
+    md_path = os.path.join(out_dir, "what_worked_week.md")
+    with open(md_path, "w", encoding="utf-8") as fh:
+        fh.write(render_markdown(report))
+    paths = {"markdown": md_path, "json": None}
+    if write_json:
+        json_path = os.path.join(out_dir, "what_worked_week.json")
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(json_ready(report), fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+        paths["json"] = json_path
+    return paths
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Weekly content analytics from X Analytics CSV exports. No X API calls.")
+    parser.add_argument("--exports", required=True, help="folder with content_*.csv and overview_*.csv")
+    parser.add_argument("--out", default=".", help="folder for what_worked_week.md")
+    parser.add_argument("--json", action="store_true", help="also write what_worked_week.json")
+    parser.add_argument("--config", help="optional config.json for keyword_tags")
+    args = parser.parse_args()
+    report = analyze(args.exports, load_keywords(args.config))
+    paths = write_report(report, args.out, args.json)
+    print(json.dumps(paths, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

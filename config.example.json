@@ -20,5 +20,6 @@
   "report": "both",
   "per_post": false,
   "per_day": false,
-  "timezone": ""
+  "timezone": "",
+  "keyword_tags": ["Tesla", "Adelaide"]
 }

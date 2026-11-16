@@ -120,17 +120,19 @@ python3 save_raw.py <tool-result-file> <name>
 
 Pick a UTC timestamp `T` when you start. Pass `T` to the script as `--now`. For a week (or for both windows), `start_time` is `T` minus 7 days, for example `T` = `2026-11-04T18:00:00Z` and `start_time` = `2026-10-28T18:00:00Z`. For a day-only run, `start_time` is `T` minus 24 hours. One fetch feeds every window you render: the script cuts the 24-hour window out of the same files.
 
+Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_tweets`. The script accepts both.
+
 `{ID}` is your user id. Page with `pagination_token` set to the previous `meta.next_token`, and stop when there is no next token. Pages can be shorter than `max_results`.
 
 | # | Tool | Arguments | Save as |
 |---|---|---|---|
-| 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets`, `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
-| 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url` | `mentions_1`, … |
+| 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets`, `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
+| 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url` | `mentions_1`, … |
 | 3 | `get_posts_liking_users` | Posts with likes. `user.fields=username,name,description,profile_image_url` | `likes_<postid>` |
 | 4 | `get_posts_reposted_by` | Posts with reposts. Same user fields | `reposts_<postid>` |
-| 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_tweets`, `expansions=author_id` | `quotes_<postid>` |
-| 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_tweets,conversation_id`, saved as `my_posts_1`. A failed call is skipped | `my_likes_1`, `my_posts_1` |
-| 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=10`, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_tweets` | `latest_<userid>` |
+| 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_posts`, `expansions=author_id` | `quotes_<postid>` |
+| 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_posts,conversation_id`, saved as `my_posts_1`. A failed call is skipped | `my_likes_1`, `my_posts_1` |
+| 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=10`, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts` | `latest_<userid>` |
 | 8 | `get_users_me_followers` and `get_users_me_following` | `max_results=1000`. Refresh on Mondays | `followers_1`, `following_1`, … |
 
 On a Grok Bot these tools are on the X connection. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.

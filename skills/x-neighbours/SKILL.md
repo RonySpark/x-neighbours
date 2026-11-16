@@ -54,6 +54,8 @@ That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object
 
 Call the tools by these names on the owner's X connection. Page with `pagination_token` set to the previous response's `meta.next_token`. Stop when there is no next token. A page can be shorter than `max_results`.
 
+Request `referenced_posts` in `post.fields` (the expansion is also `referenced_posts`). Older dumps may say `referenced_tweets`. The script accepts both.
+
 `{ID}` is the owner's user id from config.
 
 ### 1. Posts
@@ -64,7 +66,7 @@ Call the tools by these names on the owner's X connection. Page with `pagination
 - `start_time`: `START`
 - `exclude`: `retweets`
 - `max_results`: `100`
-- `post.fields`: `created_at,public_metrics,in_reply_to_user_id,referenced_tweets`
+- `post.fields`: `created_at,public_metrics,in_reply_to_user_id,referenced_posts`
 - `expansions`: `author_id`
 - `user.fields`: `username,name,profile_image_url,public_metrics`
 
@@ -79,7 +81,7 @@ Also request `conversation_id` in `post.fields` so a later reply from the owner 
 - `id`: `{ID}`
 - `start_time`: `START`
 - `max_results`: `100`
-- `post.fields`: `created_at,author_id,in_reply_to_user_id,referenced_tweets,conversation_id`
+- `post.fields`: `created_at,author_id,in_reply_to_user_id,referenced_posts,conversation_id`
 - `expansions`: `author_id`
 - `user.fields`: `username,name,description,public_metrics,profile_image_url`
 
@@ -111,7 +113,7 @@ Same budget rule as likes, using `repost_count` and `quote_count` from the post'
 
 `get_posts_reposted_by` — `id` the post id, `max_results` 100, `user.fields=username,name,description,public_metrics,profile_image_url`. Save as `reposts_<postid>`.
 
-`get_posts_quoted_posts` — `id` the post id, `max_results` 100, `post.fields=created_at,author_id,text,referenced_tweets,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url`. Save as `quotes_<postid>`.
+`get_posts_quoted_posts` — `id` the post id, `max_results` 100, `post.fields=created_at,author_id,text,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url`. Save as `quotes_<postid>`.
 
 ### 5. Posts the owner already engaged with
 
@@ -119,17 +121,17 @@ Do this once per run, before the catch-up pages, and only if today's files are m
 
 `get_users_liked_posts` — `id` `{ID}`, `max_results` 20, `post.fields=id,created_at,author_id`. Save as `my_likes_1`. If `meta.next_token` is present, save one more page as `my_likes_2`, then stop.
 
-`get_users_posts` — `id` `{ID}`, `max_results` 20, no `exclude` (replies and reposts have to be in the page), `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_tweets,conversation_id`. Save as `my_posts_1`. One page only.
+`get_users_posts` — `id` `{ID}`, `max_results` 20, no `exclude` (replies and reposts have to be in the page), `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts,conversation_id`. Save as `my_posts_1`. One page only.
 
-Those files, plus replies already in `posts_*.json`, are how Catch up hides a post the owner liked, replied to, reposted, or quoted. A reply's `referenced_tweets` id of type `replied_to`, its `conversation_id`, a quote's `quoted` id, and a repost's `retweeted` id all count.
+Those files, plus replies already in `posts_*.json`, are how Catch up hides a post the owner liked, replied to, reposted, or quoted. A reply's `referenced_posts` id of type `replied_to`, its `conversation_id`, a quote's `quoted` id, and a repost's `retweeted` id all count.
 
 ### 6. Latest post for the catch-up list
 
 Read the good neighbours file first (see Good neighbours). If it lists people, fetch a latest page for each of them, at most 20, and do not also fetch the ranked ten. If the file is missing or the list is empty, pick at most 10 people with the highest quiet score in config (replies and quotes use `reply_weight`, likes use `like_weight`; do not tell the owner the numbers). For each person, one call:
 
-`get_users_posts` — `id` their user id, `max_results` 10, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_tweets`, `expansions=author_id`, `user.fields=username,name,profile_image_url`.
+`get_users_posts` — `id` their user id, `max_results` 10, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts`, `expansions=author_id`, `user.fields=username,name,profile_image_url`.
 
-Save the whole page as `latest_<userid>`. Catch up walks that page newest first and keeps the first original post the owner has not already liked, replied to, reposted, or quoted. A quote of their own counts. A reply (`in_reply_to_user_id` or `referenced_tweets` type `replied_to`) and a plain repost (`retweeted`, or text starting `RT @`) do not. If every original post in the page is already engaged, the script skips that person. If nobody is left, the section is one line: “You're all caught up with your good neighbours 🎉”. With an empty list it fills the ten from the next person who still has an unengaged original post. With a list it does not fill from anyone else. Skip a file saved earlier today.
+Save the whole page as `latest_<userid>`. Catch up walks that page newest first and keeps the first original post the owner has not already liked, replied to, reposted, or quoted. A quote of their own counts. A reply (`in_reply_to_user_id` or `referenced_posts` type `replied_to`) and a plain repost (`retweeted`, or text starting `RT @`) do not. If every original post in the page is already engaged, the script skips that person. If nobody is left, the section is one line: “You're all caught up with your good neighbours 🎉”. With an empty list it fills the ten from the next person who still has an unengaged original post. With a list it does not fill from anyone else. Skip a file saved earlier today.
 
 ### 7. Followers and following
 

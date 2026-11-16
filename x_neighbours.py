@@ -98,6 +98,32 @@ def as_bool(value):
     return bool(value)
 
 
+def referenced(obj):
+    """Referenced posts from either API field name, with string ids."""
+    if not isinstance(obj, dict):
+        return []
+    refs = obj.get("referenced_posts")
+    if refs is None:
+        refs = obj.get("referenced_tweets")
+    out = []
+    for ref in refs or []:
+        if not isinstance(ref, dict):
+            continue
+        ref = dict(ref)
+        if ref.get("id") is not None:
+            ref["id"] = str(ref["id"])
+        out.append(ref)
+    return out
+
+
+def set_referenced(obj):
+    """Store referenced posts under referenced_tweets so later reads share one key."""
+    refs = referenced(obj)
+    if refs:
+        obj["referenced_tweets"] = refs
+    return obj
+
+
 def counted(n, singular, plural):
     return f"{n} {singular if n == 1 else plural}"
 
@@ -122,19 +148,19 @@ class Data:
             for post in doc.get("data") or []:
                 if not post.get("id"):
                     continue
-                post = dict(post)
+                post = set_referenced(dict(post))
                 post["id"] = str(post["id"])
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
                 if post.get("author_id", self.me) == self.me:
                     self.posts[post["id"]] = post
-                    for ref in post.get("referenced_tweets") or []:
+                    for ref in referenced(post):
                         if ref.get("type") == "replied_to" and ref.get("id"):
                             self.owner_replied_to.add(str(ref["id"]))
             self._users((doc.get("includes") or {}).get("users") or [])
         for _, doc in load(os.path.join(data_dir, "mentions_*.json")):
             for mention in doc.get("data") or []:
-                mention = dict(mention)
+                mention = set_referenced(dict(mention))
                 mid = mention.get("id")
                 if mid is not None:
                     mid = str(mid)
@@ -146,14 +172,6 @@ class Data:
                     mention["author_id"] = str(mention["author_id"])
                 if mention.get("in_reply_to_user_id") is not None:
                     mention["in_reply_to_user_id"] = str(mention["in_reply_to_user_id"])
-                refs = []
-                for ref in mention.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    mention["referenced_tweets"] = refs
                 self.mentions.append(mention)
             self._users((doc.get("includes") or {}).get("users") or [])
         for path, doc in load(os.path.join(data_dir, "likes_*.json")):
@@ -230,7 +248,7 @@ class Data:
             bucket = self.quotes.setdefault(pid, [])
             have = {item.get("id") for item in bucket}
             for post in doc.get("data") or []:
-                post = dict(post)
+                post = set_referenced(dict(post))
                 if post.get("id") is None:
                     continue
                 post["id"] = str(post["id"])
@@ -238,14 +256,6 @@ class Data:
                     continue
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
-                refs = []
-                for ref in post.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    post["referenced_tweets"] = refs
                 post["_on_post"] = pid
                 bucket.append(post)
                 have.add(post["id"])
@@ -259,7 +269,7 @@ class Data:
             self._users((doc.get("includes") or {}).get("users") or [])
             posts = []
             for post in doc.get("data") or []:
-                post = dict(post)
+                post = set_referenced(dict(post))
                 if post.get("id") is None or not post.get("created_at"):
                     continue
                 post["id"] = str(post["id"])
@@ -267,14 +277,6 @@ class Data:
                     post["author_id"] = str(post["author_id"])
                 if post.get("in_reply_to_user_id") is not None:
                     post["in_reply_to_user_id"] = str(post["in_reply_to_user_id"])
-                refs = []
-                for ref in post.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    post["referenced_tweets"] = refs
                 if is_original_post(post):
                     posts.append(post)
             if not posts:
@@ -297,8 +299,8 @@ class Data:
         for key in ("in_reply_to_tweet_id", "in_reply_to_status_id"):
             if post.get(key):
                 self.engaged.add(str(post[key]))
-        for ref in post.get("referenced_tweets") or []:
-            if not isinstance(ref, dict) or ref.get("id") is None:
+        for ref in referenced(post):
+            if ref.get("id") is None:
                 continue
             kind = (ref.get("type") or "").lower()
             if kind in ("replied_to", "quoted", "retweeted"):
@@ -314,7 +316,7 @@ class Data:
             self._add_owner_targets(post)
         for doc in load_soft(os.path.join(self.data_dir, "my_posts_*.json")):
             for post in doc.get("data") or []:
-                self._add_owner_targets(post)
+                self._add_owner_targets(set_referenced(dict(post)))
         for doc in load_soft(os.path.join(self.data_dir, "my_likes_*.json")):
             for post in doc.get("data") or []:
                 if isinstance(post, dict) and post.get("id") is not None:
@@ -366,7 +368,7 @@ class Data:
                 continue
             if not self._in_window(mention.get("created_at"), since, until):
                 continue
-            refs = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+            refs = [ref.get("id") for ref in referenced(mention)
                     if ref.get("type") == "replied_to"]
             if mention.get("in_reply_to_user_id") == self.me or any(ref in self.posts for ref in refs):
                 replies[mention["author_id"]] += 1
@@ -390,7 +392,7 @@ def is_original_post(post):
     text = post.get("text") or ""
     if text.startswith("RT @"):
         return False
-    for ref in post.get("referenced_tweets") or []:
+    for ref in referenced(post):
         kind = (ref.get("type") or "").lower()
         if kind in ("replied_to", "retweeted"):
             return False
@@ -862,9 +864,9 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
 
     for mention in data.mentions:
         author = mention.get("author_id")
-        refs = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+        refs = [ref.get("id") for ref in referenced(mention)
                 if ref.get("type") == "replied_to"]
-        quoted = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+        quoted = [ref.get("id") for ref in referenced(mention)
                   if ref.get("type") == "quoted"]
         on_reply = next((ref for ref in refs if ref in data.posts), None)
         on_quote = next((ref for ref in quoted if ref in data.posts), None)

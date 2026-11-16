@@ -1,0 +1,42 @@
+{
+  "_comment": "FICTIONAL. Owner posts, including a reply that closes a back-and-forth.",
+  "data": [
+    {
+      "id": "2001",
+      "author_id": "100",
+      "created_at": "2026-11-13T05:50:50.000Z",
+      "text": "Left a light on in the window.",
+      "conversation_id": "2001",
+      "public_metrics": {
+        "like_count": 3,
+        "reply_count": 5,
+        "repost_count": 0
+      }
+    },
+    {
+      "id": "8901",
+      "author_id": "100",
+      "created_at": "2026-11-13T10:30:00.000Z",
+      "text": "Thanks for the note.",
+      "conversation_id": "2001",
+      "referenced_tweets": [
+        {"type": "replied_to", "id": "3302"}
+      ],
+      "public_metrics": {
+        "like_count": 0,
+        "reply_count": 0,
+        "repost_count": 0
+      }
+    }
+  ],
+  "includes": {
+    "users": [
+      {
+        "id": "100",
+        "name": "Test Owner",
+        "username": "testowner"
+      }
+    ]
+  },
+  "meta": {"result_count": 2}
+}

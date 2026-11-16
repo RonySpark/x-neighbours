@@ -1,0 +1,8 @@
+{
+  "_comment": "FICTIONAL following.",
+  "data": [
+    {"id": "203", "name": "Riley Back", "username": "backforth"},
+    {"id": "204", "name": "Four Glen", "username": "neighbour4"}
+  ],
+  "meta": {"result_count": 2}
+}

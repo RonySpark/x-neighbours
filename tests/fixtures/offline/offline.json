@@ -1,0 +1,19 @@
+{
+  "handle": "testowner",
+  "user_id": "100",
+  "like_weight": 1,
+  "reply_weight": 3,
+  "mutual_bonus": 2,
+  "new_follower_credit": 1,
+  "waiting_rule": {
+    "per_person": true,
+    "latest_unreplied": true
+  },
+  "exclude": ["grok"],
+  "rings": 1,
+  "show_names": true,
+  "windows": ["week"],
+  "top": 10,
+  "theme": "midnight",
+  "report": "both"
+}

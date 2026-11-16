@@ -8,6 +8,7 @@ report_*.md
 report_*.json
 report_*.png
 x_neighbours_*.png
+open_items.csv
 
 # Personal files copied into the working tree. The fictional example stays tracked.
 /good_neighbours.json

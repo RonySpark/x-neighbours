@@ -46,7 +46,9 @@ python3 x_neighbours.py --now 2026-11-04T18:00:00Z
 |---|---|
 | `report_week.md` | Sections 1–3. `report_day.md` for a day, `report_first.md` for the first run, `report_fresh.md` since the last report |
 | `report_*_thanks.md` | Section 4, the thank-you text and link. The picture is sent in the same chat message |
+| `report_*_more.json` | Extra Flowers, Catch up, and Replies entries beyond the first five |
 | `x_neighbours_*.png` | The house-framed picture, included inside section 4 |
+| `open_items.csv` | Hand-off rows for another bot: `follow_back`, `first_reply`, `catch_up`, `thank_you`. Status stays `done`/`dropped` from the previous file when `kind`+`handle` match |
 
 A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same runbook is in [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md)). Any concern in chat can become a short GitHub issue: the bot drafts it and hands over a prefilled link, once per topic, and the owner submits it. The Monday report ends with one line inviting that. The draft leaves out handles, names, and post text.
 
@@ -60,6 +62,12 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
   "user_id": "your_user_id",
   "like_weight": 1,
   "reply_weight": 3,
+  "mutual_bonus": 2,
+  "new_follower_credit": 1,
+  "waiting_rule": {
+    "per_person": true,
+    "latest_unreplied": true
+  },
   "exclude": ["grok"],
   "rings": 3,
   "show_names": true,
@@ -80,6 +88,9 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `handle` | Your X handle, without @ |
 | `user_id` | Your numeric X user id, stored as a string |
 | `like_weight`, `reply_weight` | Quiet points. A reply or quote uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
+| `mutual_bonus` | Extra quiet points when you follow each other. Default 2. Not printed |
+| `new_follower_credit` | Extra quiet points when they follow you and you do not follow them. Default 1. Not printed |
+| `waiting_rule` | Replies waiting count. `per_person` (default true) counts each person once. `latest_unreplied` (default true) counts them only if their latest message in that thread has no reply from the owner |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |
 | `first_run_days` | How many days the first fetch covers. Default 2. Daily stays 24 hours. Monday stays 7 days |
@@ -192,9 +203,19 @@ python3 x_neighbours.py \
 
 `examples/few/sample-report.md` is sections 1–3 of that daily report: Flowers, then Catch up with your good neighbours, then Greetings. `examples/few/sample-thanks.md` is section 4. The ⭐ Add card is separate and only lists Flowers people who are not on the list. Rebuild both datasets with `python3 examples/make_sample.py`. The list file is not rewritten by that script. Add someone with `python3 good_neighbours.py --file PATH add handle --id ID --name "Name"`. The freshness clock is `python3 report_state.py --file PATH check`.
 
+## Tests
+
+Saved JSON under `tests/fixtures/offline/` is enough. No X calls:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+`tests/test_offline_report.py` runs a week report end to end and checks that every output file is written (markdown, picture, `more.json`, thanks, `state.json`, `open_items.csv`) and that waiting replies are counted once per person. `tests/test_chat_format.py` checks the chat layout against `examples/few`.
+
 ## Privacy
 
-- `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, and a `good_neighbours.json` or `state.json` copied into the repo root are gitignored. Leave them that way. The real list and the report clock belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked.
+- `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `open_items.csv`, and a `good_neighbours.json` or `state.json` copied into the repo root are gitignored. Leave them that way. The real list and the report clock belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked.
 - Real avatars are downloaded from the `profile_image_url` values in the saved JSON into `.avatar_cache/` next to the output folder.
 - Do not commit a creator's config, raw responses, avatar cache, reports, or pictures, and do not open a pull request that contains them.
 - The sample dataset is the only account data in this repo, and it is not from X.
@@ -220,3 +241,4 @@ python3 x_neighbours.py \
 | `examples/few/good_neighbours.json` | Fictional good neighbours list |
 | `examples/few/sample-report.md` | Sections 1–3 of a daily report from that list |
 | `examples/few/sample-thanks.md` | Section 4, the thank-you with no usernames |
+| `tests/` | Offline report check and chat-format tests |

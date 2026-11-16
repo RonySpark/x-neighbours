@@ -3,6 +3,12 @@
   "user_id": "your_user_id",
   "like_weight": 1,
   "reply_weight": 3,
+  "mutual_bonus": 2,
+  "new_follower_credit": 1,
+  "waiting_rule": {
+    "per_person": true,
+    "latest_unreplied": true
+  },
   "exclude": ["grok"],
   "rings": 3,
   "show_names": true,

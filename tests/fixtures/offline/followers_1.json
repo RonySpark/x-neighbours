@@ -1,0 +1,9 @@
+{
+  "_comment": "FICTIONAL followers.",
+  "data": [
+    {"id": "201", "name": "Pat Wait", "username": "waitalot"},
+    {"id": "203", "name": "Riley Back", "username": "backforth"},
+    {"id": "207", "name": "Sam Follow", "username": "followme"}
+  ],
+  "meta": {"result_count": 3}
+}

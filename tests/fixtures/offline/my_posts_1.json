@@ -1,0 +1,14 @@
+{
+  "_comment": "FICTIONAL owner replies.",
+  "data": [
+    {
+      "id": "8901",
+      "author_id": "100",
+      "created_at": "2026-11-13T10:30:00.000Z",
+      "text": "Thanks for the note.",
+      "conversation_id": "2001",
+      "referenced_tweets": [{"type": "replied_to", "id": "3302"}]
+    }
+  ],
+  "meta": {"result_count": 1}
+}

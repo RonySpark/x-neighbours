@@ -23,6 +23,7 @@ Usage:
                       [--good-neighbours PATH]
 """
 import argparse
+import csv
 import glob
 import json
 import math
@@ -62,7 +63,38 @@ def load_soft(pattern):
 
 
 def ts(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if isinstance(s, datetime):
+        when = s
+    else:
+        when = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+def iso_utc(value):
+    if not value:
+        return ""
+    return ts(value).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def referenced(post):
+    """Prefer referenced_tweets; fall back to referenced_posts (X API naming)."""
+    if not isinstance(post, dict):
+        return []
+    return post.get("referenced_tweets") or post.get("referenced_posts") or []
+
+
+def normalize_refs(post):
+    refs = []
+    for ref in referenced(post):
+        ref = dict(ref)
+        if ref.get("id") is not None:
+            ref["id"] = str(ref["id"])
+        refs.append(ref)
+    if refs:
+        post["referenced_tweets"] = refs
+    return refs
 
 
 def fmt_num(n):
@@ -116,9 +148,11 @@ class Data:
                 post["id"] = str(post["id"])
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
+                if post.get("conversation_id") is not None:
+                    post["conversation_id"] = str(post["conversation_id"])
                 if post.get("author_id", self.me) == self.me:
                     self.posts[post["id"]] = post
-                    for ref in post.get("referenced_tweets") or []:
+                    for ref in normalize_refs(post):
                         if ref.get("type") == "replied_to" and ref.get("id"):
                             self.owner_replied_to.add(str(ref["id"]))
             self._users((doc.get("includes") or {}).get("users") or [])
@@ -136,14 +170,9 @@ class Data:
                     mention["author_id"] = str(mention["author_id"])
                 if mention.get("in_reply_to_user_id") is not None:
                     mention["in_reply_to_user_id"] = str(mention["in_reply_to_user_id"])
-                refs = []
-                for ref in mention.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    mention["referenced_tweets"] = refs
+                if mention.get("conversation_id") is not None:
+                    mention["conversation_id"] = str(mention["conversation_id"])
+                normalize_refs(mention)
                 self.mentions.append(mention)
             self._users((doc.get("includes") or {}).get("users") or [])
         for path, doc in load(os.path.join(data_dir, "likes_*.json")):
@@ -228,14 +257,9 @@ class Data:
                     continue
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
-                refs = []
-                for ref in post.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    post["referenced_tweets"] = refs
+                if post.get("conversation_id") is not None:
+                    post["conversation_id"] = str(post["conversation_id"])
+                normalize_refs(post)
                 post["_on_post"] = pid
                 bucket.append(post)
                 have.add(post["id"])
@@ -257,14 +281,9 @@ class Data:
                     post["author_id"] = str(post["author_id"])
                 if post.get("in_reply_to_user_id") is not None:
                     post["in_reply_to_user_id"] = str(post["in_reply_to_user_id"])
-                refs = []
-                for ref in post.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    post["referenced_tweets"] = refs
+                if post.get("conversation_id") is not None:
+                    post["conversation_id"] = str(post["conversation_id"])
+                normalize_refs(post)
                 if is_original_post(post):
                     posts.append(post)
             if not posts:
@@ -287,7 +306,7 @@ class Data:
         for key in ("in_reply_to_tweet_id", "in_reply_to_status_id"):
             if post.get(key):
                 self.engaged.add(str(post[key]))
-        for ref in post.get("referenced_tweets") or []:
+        for ref in referenced(post):
             if not isinstance(ref, dict) or ref.get("id") is None:
                 continue
             kind = (ref.get("type") or "").lower()
@@ -356,7 +375,7 @@ class Data:
                 continue
             if not self._in_window(mention.get("created_at"), since, until):
                 continue
-            refs = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+            refs = [ref.get("id") for ref in referenced(mention)
                     if ref.get("type") == "replied_to"]
             if mention.get("in_reply_to_user_id") == self.me or any(ref in self.posts for ref in refs):
                 replies[mention["author_id"]] += 1
@@ -380,7 +399,7 @@ def is_original_post(post):
     text = post.get("text") or ""
     if text.startswith("RT @"):
         return False
-    for ref in post.get("referenced_tweets") or []:
+    for ref in referenced(post):
         kind = (ref.get("type") or "").lower()
         if kind in ("replied_to", "retweeted"):
             return False
@@ -721,6 +740,12 @@ DEFAULTS = {
     "user_id": None,
     "like_weight": 1,
     "reply_weight": 3,
+    "mutual_bonus": 2,
+    "new_follower_credit": 1,
+    "waiting_rule": {
+        "per_person": True,
+        "latest_unreplied": True,
+    },
     "exclude": ["grok"],
     "rings": 3,
     "show_names": True,
@@ -737,6 +762,8 @@ DEFAULTS = {
     "fresh_hours": None,
     "state": None,
 }
+OPEN_ITEM_FIELDS = ("kind", "handle", "reason", "link", "status")
+OPEN_ITEM_KEEP = {"done", "dropped"}
 WINDOWS = {
     "day": ("last 24 hours", 1, "Top neighbours of the last 24 hours"),
     "week": ("last 7 days", 7, "Top neighbours of the last 7 days"),
@@ -826,8 +853,17 @@ def is_good_neighbour(uid, username, ids, names):
     return uid in ids or (username or "").lower() in names
 
 
+def waiting_rule_from(value):
+    rule = dict(DEFAULTS["waiting_rule"])
+    if isinstance(value, dict):
+        for key in rule:
+            if key in value:
+                rule[key] = as_bool(value[key])
+    return rule
+
+
 def build_activity(data, since, until, top, like_weight, reply_weight, mode, now,
-                   good_neighbours=None):
+                   good_neighbours=None, mutual_bonus=0, new_follower_credit=0):
     items = []
     seen = set()
 
@@ -838,6 +874,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             return
         seen.add(post["id"])
         when = ts(post["created_at"])
+        conversation = post.get("conversation_id")
         items.append({
             "kind": kind,
             "id": post["id"],
@@ -848,13 +885,14 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             "on_text": post_text(data, on_id) if on_id else "your post",
             "url": status_url(data, author, post["id"]),
             "replied": post["id"] in data.owner_replied_to,
+            "conversation_id": str(conversation) if conversation else None,
         })
 
     for mention in data.mentions:
         author = mention.get("author_id")
-        refs = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+        refs = [ref.get("id") for ref in referenced(mention)
                 if ref.get("type") == "replied_to"]
-        quoted = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+        quoted = [ref.get("id") for ref in referenced(mention)
                   if ref.get("type") == "quoted"]
         on_reply = next((ref for ref in refs if ref in data.posts), None)
         on_quote = next((ref for ref in quoted if ref in data.posts), None)
@@ -890,7 +928,12 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             replies = quotes = 0
         if which == "replies":
             likes = reposts = 0
-        return (likes + reposts) * like_weight + (replies + quotes) * reply_weight
+        total = (likes + reposts) * like_weight + (replies + quotes) * reply_weight
+        if uid in data.followers and uid in data.following:
+            total += mutual_bonus
+        elif uid in data.followers:
+            total += new_follower_credit
+        return total
 
     good = good_neighbours or []
     good_ids, good_names = good_neighbour_ids(good)
@@ -1189,31 +1232,72 @@ def catch_record(person):
         "stranger": bool(person.get("stranger")),
         "text": snippet(latest.get("text")) or "Post",
         "url": person.get("latest_url") or "",
-        "created_at": created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if created else "",
+        "created_at": iso_utc(created),
         "avatar": avatar_url(person),
     }
 
 
-def greeting_rows(threads):
+def thread_key(item):
+    return item.get("conversation_id") or item.get("on_id") or item.get("id")
+
+
+def greeting_rows(threads, waiting_rule=None):
+    """One row per person by default. Waiting only if their latest message in
+    that thread has no reply from the owner."""
+    rule = waiting_rule_from(waiting_rule)
     unanswered, answered = [], []
+
+    def when_of(item):
+        created = item.get("created_at")
+        return ts(created) if created else datetime.min.replace(tzinfo=timezone.utc)
+
+    def make_row(thread, item):
+        created = item.get("created_at")
+        return {
+            "name": thread["name"],
+            "username": thread["username"],
+            "good": bool(thread.get("good")),
+            "stranger": bool(thread.get("stranger")),
+            "kind": item.get("kind") or "reply",
+            "text": snippet(item.get("text")) or "Post",
+            "url": item.get("url") or "",
+            "on_text": snippet(item.get("on_text") or ""),
+            "created_at": iso_utc(created),
+            "replied": bool(item.get("replied")),
+            "avatar": avatar_url(thread),
+            "_when": when_of(item),
+        }
+
     for thread in threads:
-        for item in thread["items"]:
-            created = item.get("created_at")
-            row = {
-                "name": thread["name"],
-                "username": thread["username"],
-                "good": bool(thread.get("good")),
-                "stranger": bool(thread.get("stranger")),
-                "kind": item.get("kind") or "reply",
-                "text": snippet(item.get("text")) or "Post",
-                "url": item.get("url") or "",
-                "on_text": snippet(item.get("on_text") or ""),
-                "created_at": created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if created else "",
-                "replied": bool(item.get("replied")),
-                "avatar": avatar_url(thread),
-                "_when": created or datetime.min.replace(tzinfo=timezone.utc),
-            }
-            (answered if row["replied"] else unanswered).append(row)
+        items = list(thread.get("items") or [])
+        if not items:
+            continue
+        if not rule["per_person"]:
+            for item in items:
+                row = make_row(thread, item)
+                (answered if row["replied"] else unanswered).append(row)
+            continue
+        groups = defaultdict(list)
+        for item in items:
+            groups[thread_key(item)].append(item)
+        waiting, done = [], []
+        for group in groups.values():
+            group.sort(key=when_of, reverse=True)
+            if rule["latest_unreplied"]:
+                latest = group[0]
+                (done if latest.get("replied") else waiting).append(latest)
+            else:
+                open_items = [item for item in group if not item.get("replied")]
+                if open_items:
+                    waiting.append(open_items[0])
+                else:
+                    done.append(group[0])
+        if waiting:
+            waiting.sort(key=when_of, reverse=True)
+            unanswered.append(make_row(thread, waiting[0]))
+        elif done:
+            done.sort(key=when_of, reverse=True)
+            answered.append(make_row(thread, done[0]))
     unanswered.sort(key=lambda row: row["_when"], reverse=True)
     answered.sort(key=lambda row: row["_when"], reverse=True)
     return unanswered, answered
@@ -1250,7 +1334,7 @@ def public_greeting(row, now):
 
 
 def write_chat_report(activity, path, handle, since, now, label, top=10, items_per_user=3,
-                      show=CHAT_SHOW, window="day"):
+                      show=CHAT_SHOW, window="day", waiting_rule=None):
     totals = activity["totals"]
     people = activity["threads"] + activity["interactions"] + activity["catch_up"]
     legend = []
@@ -1296,7 +1380,7 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
         if extra > 0:
             lines.append(f"+{extra} more in What's new. Ask to see them.")
             lines.append("")
-    unanswered, answered = greeting_rows(activity["threads"])
+    unanswered, answered = greeting_rows(activity["threads"], waiting_rule)
     if not unanswered and not answered:
         lines.append("No replies or quote posts in this stretch.")
     else:
@@ -1322,6 +1406,90 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
         "greetings_unanswered": [public_greeting(row, now) for row in unanswered[show:]],
         "greetings_answered": [public_greeting(row, now) for row in answered],
     }
+
+
+def load_open_status(path):
+    previous = {}
+    if not path or not os.path.isfile(path):
+        return previous
+    try:
+        with open(path, newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                kind = (row.get("kind") or "").strip()
+                handle = (row.get("handle") or "").strip().lstrip("@")
+                status = (row.get("status") or "").strip().lower()
+                if kind and handle and status in OPEN_ITEM_KEEP:
+                    previous[(kind, handle.lower())] = status
+    except (OSError, csv.Error, UnicodeDecodeError):
+        return previous
+    return previous
+
+
+def open_item_rows(data, activity, thanks, handle, waiting_rule=None):
+    rows = []
+    seen = set()
+
+    def add(kind, who, reason, link):
+        who = (who or "").lstrip("@")
+        if not who:
+            return
+        key = (kind, who.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append({
+            "kind": kind,
+            "handle": who,
+            "reason": reason,
+            "link": link or "",
+            "status": "open",
+        })
+
+    for row in activity.get("interactions") or []:
+        uid = row.get("id")
+        if uid in data.followers and uid not in data.following:
+            add(
+                "follow_back",
+                row.get("username"),
+                "Follows you; you don't follow them",
+                f"https://x.com/{row.get('username')}",
+            )
+    unanswered, _answered = greeting_rows(activity.get("threads") or [], waiting_rule)
+    for row in unanswered:
+        add(
+            "first_reply",
+            row.get("username"),
+            "Waiting on a first reply" + (f": {row['text']}" if row.get("text") else ""),
+            row.get("url") or f"https://x.com/{row.get('username')}",
+        )
+    for person in activity.get("catch_up") or []:
+        latest = person.get("latest") or {}
+        preview = snippet(latest.get("text")) if latest else ""
+        add(
+            "catch_up",
+            person.get("username"),
+            "Latest original post to catch up on" + (f": {preview}" if preview else ""),
+            person.get("latest_url") or "",
+        )
+    if thanks:
+        add("thank_you", handle, "Post the thank-you", thanks.get("intent") or "")
+    return rows
+
+
+def write_open_items(path, rows, previous=None):
+    previous = previous or {}
+    out = []
+    for row in rows:
+        key = (row["kind"], row["handle"].lower())
+        if key in previous:
+            row = dict(row, status=previous[key])
+        out.append(row)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(OPEN_ITEM_FIELDS))
+        writer.writeheader()
+        writer.writerows(out)
+    return out
 
 
 def write_thanks(path, thanks):
@@ -1732,6 +1900,9 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     like_weight = whole_number(cfg["like_weight"])
     reply_weight = whole_number(cfg["reply_weight"])
+    mutual_bonus = whole_number(cfg.get("mutual_bonus") or 0)
+    new_follower_credit = whole_number(cfg.get("new_follower_credit") or 0)
+    waiting_rule = waiting_rule_from(cfg.get("waiting_rule"))
     me_id = str(cfg["user_id"])
     now = ts(args.now) if args.now else datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -1775,7 +1946,8 @@ def main():
         since = span if isinstance(span, datetime) else now - timedelta(days=span)
         activity = build_activity(
             data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
-            good_neighbours=neighbours)
+            good_neighbours=neighbours,
+            mutual_bonus=mutual_bonus, new_follower_credit=new_follower_credit)
         md_path = os.path.join(args.out, f"report_{key}.md")
         png_path = os.path.join(args.out, f"report_{key}.png")
         text, intent = thank_you_post(now, zone)
@@ -1799,11 +1971,17 @@ def main():
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),
-            window=key)
+            window=key, waiting_rule=waiting_rule)
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
         write_thanks(thanks_path, thanks)
+        open_path = os.path.join(args.out, "open_items.csv")
+        write_open_items(
+            open_path,
+            open_item_rows(data, activity, thanks, cfg["handle"], waiting_rule),
+            load_open_status(open_path),
+        )
         if key == "week":
             with open(thanks_path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + WEEKLY_FEEDBACK + "\n")
@@ -1827,6 +2005,7 @@ def main():
             "report_md": md_path,
             "thanks_md": thanks_path,
             "more_json": more_path,
+            "open_items": open_path,
             "more_counts": {name: len(rows) for name, rows in more.items()},
             "thank_you": thanks,
             "messages": [

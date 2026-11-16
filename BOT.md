@@ -7,14 +7,22 @@ You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every ru
 ## Rules
 
 - Stay within about **1,000 X reads a day** and **30 a minute**. Send about 12 calls, then pause. Count as you go. If the next batch would pass 1,000, stop, render what you have, and tell the owner which posts you skipped.
-- Refresh follower and following lists **at most once a week**. Reuse `data/followers_*.json` and `data/following_*.json` when they are under 7 days old.
+- Refresh follower and following lists **at most once a week**. Reuse `data/followers_*.json` and `data/following_*.json` when they are under 7 days old, including on Monday. Do not refetch a list that is still fresh.
+- Save every X tool result with `python3 save_raw.py <tool-result-file> <name>`. Never paste raw API JSON into this chat, especially follower and following pages. Those files are large and will blow the context. Write them to disk and drop the payload.
+- For posts, mentions, and likers, always pass `max_results` **100**. Do not omit it (the tool then pages at 25) and do not set 25. Keep paging mentions until `meta.next_token` is absent.
 - This run is **read-only**. Never follow, unfollow, like, unlike, repost, bookmark, post, reply, or DM. Never open a GitHub issue yourself. If they ask you to follow someone or to post the picture, say this run stays read-only and they can do that in the X app.
 - Leave bot accounts out. `@grok` is already in `exclude`. They can name other handles to skip anytime.
-- Never commit user data. Do not commit or push `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `good_neighbours.json`, or `state.json`. Do not open a pull request with those files. Do not run `git add .`. For a normal run, commit nothing. `git pull` is fine: those paths are gitignored. The good neighbours list and the report clock live in this bot's own store, outside the repo.
+- Never commit user data. Do not commit or push `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `good_neighbours.json`, `state.json`, or `open_items.csv`. Do not open a pull request with those files. Do not run `git add .`. For a normal run, commit nothing. `git pull` is fine: those paths are gitignored. The good neighbours list and the report clock live in this bot's own store, outside the repo.
 - Stay on this task. Do not read their DMs, bookmarks, home timeline, or other people's accounts to fill out the picture.
 - If the X tools are missing, ask the owner to connect X in this chat. Do not ask for a password, API key, or bearer token, and do not open x.com to log them in.
 
-Weights are a quiet setting. The meaning of `like_weight` and `reply_weight` lives only in the config section of [README.md](README.md). Do not ask about them before the first picture. Do not repeat the numbers on the picture, in report headings, or in the summary you send.
+Weights are a quiet setting. Scoring lives in `config.json` (see [README.md](README.md) and `config.example.json`). Do not ask about the numbers before the first picture. Do not repeat them on the picture, in report headings, or in the summary you send.
+
+- `like_weight` (default 1): a like uses this many points.
+- `reply_weight` (default 3): a reply or quote uses this many points.
+- `mutual_bonus` (default 2): extra points when you follow each other.
+- `new_follower_credit` (default 1): extra points when they follow you and you do not follow them.
+- `waiting_rule` (default `{ "per_person": true, "latest_unreplied": true }`): count each person once. They are waiting only if their latest message in that thread has no reply from the owner.
 
 ## First run
 
@@ -36,15 +44,15 @@ A manual run can fetch one window in a single pass. The daily and Monday routine
 
 One fetch covers every window in config. When `week` is on, `START` is `T` minus 7 days. When the config is day-only, `START` is `T` minus 24 hours. The script cuts the 24-hour window out of the same files, so do not fetch twice.
 
-Save each result from the repo directory:
+Save each result from the repo directory. Do not paste the JSON into this chat:
 
 ```bash
 python3 save_raw.py <tool-result-file> <name>
 ```
 
-That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object both work. If you already have the JSON object, you may write `data/<name>.json` yourself.
+That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object both work. If you already have the JSON object, write `data/<name>.json` yourself from a file on disk, never by dumping a follower or following page into the conversation.
 
-Call the tools by these names on the owner's X connection. Page with `pagination_token` set to the previous response's `meta.next_token`. Stop when there is no next token. A page can be shorter than `max_results`.
+Call the tools by these names on the owner's X connection. Always set `max_results` to **100** for posts, mentions, and likers. Page with `pagination_token` set to the previous response's `meta.next_token`. Stop when there is no next token. A page can be shorter than `max_results`. For mentions, keep calling until there is no `next_token`.
 
 `{ID}` is the owner's user id from config.
 
@@ -55,7 +63,7 @@ Call the tools by these names on the owner's X connection. Page with `pagination
 - `id`: `{ID}`
 - `start_time`: `START`
 - `exclude`: `retweets`
-- `max_results`: `100`
+- `max_results`: `100` (never 25; never omit this)
 - `post.fields`: `created_at,public_metrics,in_reply_to_user_id,referenced_tweets`
 - `expansions`: `author_id`
 - `user.fields`: `username,name,profile_image_url,public_metrics`
@@ -70,14 +78,14 @@ Also request `conversation_id` in `post.fields` so a later reply from the owner 
 
 - `id`: `{ID}`
 - `start_time`: `START`
-- `max_results`: `100`
+- `max_results`: `100` (never 25; never omit this)
 - `post.fields`: `created_at,author_id,in_reply_to_user_id,referenced_tweets,conversation_id`
 - `expansions`: `author_id`
 - `user.fields`: `username,name,description,public_metrics,profile_image_url`
 
-Save as `mentions_1`, `mentions_2`, and so on.
+Save as `mentions_1`, `mentions_2`, and so on. If `meta.next_token` is present, fetch the next page. Keep going until there is no next token.
 
-A reply is a mention with `in_reply_to_user_id` equal to `{ID}`, or a `replied_to` reference whose id is one of the owner's posts. Ignore the owner's own posts.
+A reply is a mention with `in_reply_to_user_id` equal to `{ID}`, or a `replied_to` reference whose id is one of the owner's posts. Some X tools return `referenced_posts` instead of `referenced_tweets`. The script accepts either (tweets first). Ignore the owner's own posts.
 
 ### 3. Likers
 
@@ -90,7 +98,7 @@ For each of the owner's posts in the fetched window:
 `get_posts_liking_users`
 
 - `id`: the post id
-- `max_results`: `100`
+- `max_results`: `100` (never 25; never omit this)
 - `user.fields`: `username,name,description,public_metrics,profile_image_url`
 
 Save as `likes_<postid>`. If `meta.next_token` is present and the day's budget allows, save the next page as `likes_<postid>_p2`, and so on. One page covers almost every post.
@@ -125,7 +133,7 @@ Save the whole page as `latest_<userid>`. Catch up walks that page newest first 
 
 ### 7. Followers and following
 
-Do this only when `data/followers_1.json` or `data/following_1.json` is missing or older than 7 days, and on the weekly run below.
+Do this only when `data/followers_1.json` or `data/following_1.json` is missing or older than 7 days. If both files exist and are under 7 days old, reuse them and skip this step, including on Monday. Save the pages with `save_raw.py`. Do not paste follower JSON into this chat.
 
 `get_users_me_followers` and `get_users_me_following`
 
@@ -142,7 +150,7 @@ Overwrite those names as you go. Do not delete the previous files until the new 
 python3 x_neighbours.py --now <T> --good-neighbours <path> --state <state path>
 ```
 
-`<path>` is `good_neighbours.json` in the store. `<state path>` is `state.json` beside it. The script reads `config.json` and `data/`. For each window it writes `report_<window>.md` (sections 1–3) and `report_<window>_thanks.md` (section 4), plus `x_neighbours_<window>.png`, the house-framed picture. The report card PNG is off unless you pass `--report-card`. Stdout is JSON with totals, `catch_up`, `picture`, `thank_you`, and `messages`. `thank_you.text` is the thank-you sentence. It names no one. `thank_you.intent` is the post link. A day window, a first run, and a fresh on-demand report include `suggest_good_neighbours` and `add_question` when someone in Flowers is not on the list yet. A week window does not. `--first-run` uses `first_run_days` (default 2). A missing good neighbours file is an empty list. `--no-picture` skips the image; the default is to draw it every time. `--since <ISO>` is a report that starts at that time.
+`<path>` is `good_neighbours.json` in the store. `<state path>` is `state.json` beside it. The script reads `config.json` and `data/`. For each window it writes `report_<window>.md` (sections 1–3) and `report_<window>_thanks.md` (section 4), plus `x_neighbours_<window>.png`, the house-framed picture, `report_<window>_more.json`, and `open_items.csv`. `open_items.csv` is the hand-off file for one-tap actions (`follow_back`, `first_reply`, `catch_up`, `thank_you`). Status is `open` unless a previous file already marked that kind+handle `done` or `dropped`. The report card PNG is off unless you pass `--report-card`. Stdout is JSON with totals, `catch_up`, `picture`, `thank_you`, `open_items`, and `messages`. `thank_you.text` is the thank-you sentence. It names no one. `thank_you.intent` is the post link. A day window, a first run, and a fresh on-demand report include `suggest_good_neighbours` and `add_question` when someone in Flowers is not on the list yet. A week window does not. `--first-run` uses `first_run_days` (default 2). A missing good neighbours file is an empty list. `--no-picture` skips the image; the default is to draw it every time. `--since <ISO>` is a report that starts at that time.
 
 A custom period is `--days 14` (writes `report_custom`). Likes only, replies only, per post, and per day are `--report likes`, `--report replies`, `--per-post`, and `--per-day`. They re-read `data/` and do not need more X calls. Weight flags exist. Keep those values in config only, and never print them.
 
@@ -190,7 +198,7 @@ Both run at 9:00 AM in the owner's timezone. Count every X call from both toward
 ### Every day
 
 1. `git pull --ff-only`. Leave `config.json` and `data/` uncommitted.
-2. Do not refresh followers or following.
+2. Do not refresh followers or following. Reuse the files on disk if they are under 7 days old.
 3. Pick `T`. `START` is `T` minus 24 hours.
 4. Fetch posts and mentions from `START`. Save them as `posts_day_1`, `posts_day_2`, … and `mentions_day_1`, ….
 5. Fetch likers, reposters, and quote posts for that day with the budget rule above. Skip files you already have.
@@ -204,7 +212,7 @@ Leave the files in place. Later reports filter them by time.
 
 If today's `posts_day_1.json` is missing, do the daily run first.
 
-1. Refresh followers and following. This is the only day that does.
+1. Refresh followers and following only if those files are missing or older than 7 days. If they are still fresh, reuse them.
 2. Reuse today's posts, mentions, likes, reposts, quotes, `my_likes_*.json`, `my_posts_1.json`, and latest-post files. Do not request the last 24 hours again.
 3. If saved posts already cover `T` minus 7 days through `T` minus 24 hours, do not page posts or mentions for that span. Fetch only missing liker, reposter, and quote files for older posts whose count is 3 or more.
 4. If that span is missing, fetch it once: `get_users_posts` and `get_users_mentions` with `start_time` of `T` minus 7 days and `end_time` of `T` minus 24 hours. Save as `posts_week_1`, … and `mentions_week_1`, …. Then the same 3-or-more rule for likes, reposts, and quotes. Refresh `latest_<userid>.json` for each good neighbour, or for the catch-up ten when the list is empty, and only if today's file is missing.
@@ -311,3 +319,13 @@ EOF
 The script prints JSON. `url` is `https://github.com/Skybatan/x-neighbours/issues/new?title=...&body=...&labels=feedback`, URL-encoded, and kept under 7500 characters. Send that URL. The owner taps it and submits the issue themselves. You never call the GitHub API, never run `gh issue create`, and never submit the form.
 
 If the script says the draft contains a handle or a secret, rewrite the draft without that and run it again. If `shortened` is true, tell them the draft was shortened to fit the link.
+
+## Offline check
+
+The report can be run against saved JSON with no X calls:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+`tests/test_offline_report.py` uses `tests/fixtures/offline/` (an ISO-string `created_at`, a mention with only `referenced_posts`, and one person with several waiting items). It writes the week report, picture, `more.json`, thanks, `state.json`, and `open_items.csv`, and checks that waiting is counted once per person.

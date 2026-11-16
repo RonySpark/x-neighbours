@@ -123,5 +123,32 @@ class ContentTypeTest(unittest.TestCase):
         self.assertEqual(tags, ["Tesla", "Adelaide"])
 
 
+def this_week_posts():
+    data = ca.load_exports(FIXTURES)
+    end = ca.latest_export_date(data["overview"], data["content"])
+    this_span, _prev = ca.week_windows(end)
+    return data, ca.in_days(data["content"], *this_span)
+
+
+class PostingTimesTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _data, posts = this_week_posts()
+        cls.posts = posts
+        cls.times = ca.posting_times(posts)
+
+    def test_drops_top_five_percent_and_picks_wednesday_evening(self):
+        self.assertGreaterEqual(self.times["dropped"], 1)
+        self.assertIsNotNone(self.times["cutoff"])
+        self.assertEqual(self.times["best_weekday"]["weekday"], "Wednesday")
+        self.assertGreaterEqual(self.times["best_weekday"]["posts"], 3)
+        self.assertEqual(self.times["best_block"]["start_hour"], 18)
+        self.assertGreaterEqual(self.times["best_block"]["posts"], 3)
+        spike = self.posts[self.posts["text"].str.contains("Huge random spike", regex=False)]
+        self.assertEqual(len(spike), 1)
+        self.assertGreaterEqual(float(spike.iloc[0]["impressions"]), self.times["cutoff"])
+        self.assertNotIn("Thursday", self.times["best_weekday"]["weekday"])
+
+
 if __name__ == "__main__":
     unittest.main()

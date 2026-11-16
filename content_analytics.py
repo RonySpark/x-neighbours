@@ -366,3 +366,80 @@ def content_types(posts, keywords=None, min_posts=MIN_TYPE_POSTS):
         })
     out.sort(key=lambda row: (-row["median_engagement_rate"], -row["median_impressions"], row["type"]))
     return out
+
+
+WEEKDAYS = [
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+]
+
+
+def hour_label(start, span=3):
+    return f"{start:02d}:00-{start + span - 1:02d}:00"
+
+
+def posting_times(posts):
+    """Median impressions by Adelaide weekday and hour, after dropping the top 5%."""
+    empty = {
+        "kept": 0,
+        "dropped": 0,
+        "cutoff": None,
+        "pivot": {},
+        "best_weekday": None,
+        "best_block": None,
+    }
+    if posts is None or posts.empty:
+        return empty
+    n_drop = max(1, int(len(posts) * 0.05))
+    ranked = posts.sort_values("impressions", ascending=False)
+    dropped_rows = ranked.iloc[:n_drop]
+    kept = ranked.iloc[n_drop:].copy()
+    dropped = int(len(dropped_rows))
+    cutoff = float(dropped_rows["impressions"].min()) if dropped else None
+    if kept.empty:
+        kept = posts.copy()
+        dropped = 0
+        cutoff = None
+    weekday_rows = []
+    for name, group in kept.groupby("adelaide_weekday"):
+        if len(group) < MIN_TYPE_POSTS:
+            continue
+        weekday_rows.append({
+            "weekday": name,
+            "posts": int(len(group)),
+            "median_impressions": float(group["impressions"].median()),
+            "median_engagement_rate": float(group["engagement_rate"].median()),
+        })
+    weekday_rows.sort(key=lambda row: (
+        -row["median_impressions"], WEEKDAYS.index(row["weekday"])
+        if row["weekday"] in WEEKDAYS else 99,
+    ))
+    blocks = []
+    for start in range(0, 22):
+        hours = {start, start + 1, start + 2}
+        group = kept[kept["adelaide_hour"].isin(hours)]
+        if len(group) < MIN_TYPE_POSTS:
+            continue
+        blocks.append({
+            "start_hour": start,
+            "end_hour": start + 2,
+            "label": hour_label(start),
+            "posts": int(len(group)),
+            "median_impressions": float(group["impressions"].median()),
+            "median_engagement_rate": float(group["engagement_rate"].median()),
+        })
+    blocks.sort(key=lambda row: (-row["median_impressions"], row["start_hour"]))
+    pivot = {}
+    for name, group in kept.groupby("adelaide_weekday"):
+        hours = {
+            str(int(hour)): float(part["impressions"].median())
+            for hour, part in group.groupby("adelaide_hour")
+        }
+        pivot[name] = hours
+    return {
+        "kept": int(len(kept)),
+        "dropped": dropped,
+        "cutoff": cutoff,
+        "pivot": pivot,
+        "best_weekday": weekday_rows[0] if weekday_rows else None,
+        "best_block": blocks[0] if blocks else None,
+    }

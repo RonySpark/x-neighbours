@@ -20,7 +20,6 @@ class LoadExportsTest(unittest.TestCase):
         cls.data = ca.load_exports(FIXTURES)
         cls.posts = cls.data["content"]
         cls.overview = cls.data["overview"]
-        cls.video = cls.data["video"]
 
     def test_reads_bom_and_keeps_multiline_text(self):
         self.assertGreater(len(self.posts), 0)
@@ -43,26 +42,20 @@ class LoadExportsTest(unittest.TestCase):
         decoded = ca.snowflake_utc(row["post_id"])
         self.assertEqual(decoded.astimezone(timezone.utc).date(), row["date"])
 
-    def test_overview_and_optional_video_load(self):
+    def test_overview_loads(self):
         self.assertGreaterEqual(len(self.overview), 14)
         self.assertEqual(max(self.overview["date"]), date(2026, 11, 16))
         self.assertIn("impressions", self.overview.columns)
-        self.assertIn("date", self.video.columns)
-        self.assertNotIn("Video overview", self.video.columns)
-        self.assertGreater(len(self.video), 0)
-        self.assertGreater(int(self.video["views"].sum()), 0)
 
-    def test_missing_video_is_ok(self):
-        import tempfile
-        folder = tempfile.mkdtemp(prefix="xn-analytics-")
-        overview_src = os.path.join(FIXTURES, "overview_week.csv")
-        with open(overview_src, encoding="utf-8") as fh:
+    def test_two_section_video_csv_does_not_break_analyze(self):
+        video_path = os.path.join(FIXTURES, "video_week.csv")
+        with open(video_path, encoding="utf-8") as fh:
             text = fh.read()
-        with open(os.path.join(folder, "overview_week.csv"), "w", encoding="utf-8") as fh:
-            fh.write(text)
-        loaded = ca.load_exports(folder)
-        self.assertTrue(loaded["video"].empty)
-        self.assertGreater(len(loaded["overview"]), 0)
+        self.assertIn("Your videos", text)
+        self.assertIn("Uploaded on:", text)
+        report = ca.analyze(FIXTURES)
+        self.assertEqual(report["scorecard"]["totals"]["impressions"]["this"], 9100)
+        self.assertEqual(report["consistency"]["streak"]["days"], 7)
 
 
 class WeeklyScorecardTest(unittest.TestCase):

@@ -3,3 +3,8 @@ Date,Views,Watch Time (ms),Completion Rate,Average Watch Time (ms),Estimated Rev
 "Mon, Nov 16, 2026",100,50000,0.4,20000,0
 "Sun, Nov 15, 2026",80,40000,0.4,20000,0
 "Sat, Nov 14, 2026",60,30000,0.4,20000,0
+
+,,,,,,,,,
+Your videos,,,,,,,,,
+Uploaded on:,Video ID,Video title,Views,Duration,Video Link,Monetized,Estimated Revenue,Published date,Post Link
+"Mon, Nov 16, 2026",vid1,A fake clip,50,12000,https://example.com/video/1,false,0,"Mon, Nov 16, 2026",https://x.com/creator/status/1

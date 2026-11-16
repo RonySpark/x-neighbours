@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Content analytics from X Analytics CSV exports. No X API calls.
 
-Reads content_*.csv, overview_*.csv, and optional video_*.csv from an exports
-folder. Post time is not in the CSV; it is decoded from the Post id snowflake.
+Reads content_*.csv and overview_*.csv from an exports folder. Post time is
+not in the CSV; it is decoded from the Post id snowflake. Video exports are
+ignored.
 
 Usage:
   python3 content_analytics.py --exports <dir> --out <dir> [--json]
@@ -73,14 +74,6 @@ OVERVIEW_COUNTS = [
     "unfollows", "replies", "reposts", "profile_visits", "create_post",
     "video_views", "media_views",
 ]
-VIDEO_COLUMNS = {
-    "Date": "date_raw",
-    "Views": "views",
-    "Watch Time (ms)": "watch_time_ms",
-    "Completion Rate": "completion_rate",
-    "Average Watch Time (ms)": "average_watch_time_ms",
-    "Estimated Revenue": "estimated_revenue",
-}
 
 
 def parse_export_date(value):
@@ -113,10 +106,10 @@ def to_counts(frame, columns):
     return frame
 
 
-def read_tables(paths, rename, counts, skiprows=0):
+def read_tables(paths, rename, counts):
     frames = []
     for path in paths:
-        frame = pd.read_csv(path, encoding="utf-8-sig", skiprows=skiprows)
+        frame = pd.read_csv(path, encoding="utf-8-sig")
         frame = frame.rename(columns={key: rename[key] for key in rename if key in frame.columns})
         wanted = [col for col in rename.values() if col in frame.columns]
         frame = frame[wanted].copy()
@@ -166,40 +159,15 @@ def load_overview(folder):
     return daily.sort_values("date").reset_index(drop=True)
 
 
-def load_video(folder):
-    """Optional. The first line of a video export is a title row, then the header."""
-    paths = csv_paths(folder, "video")
-    if not paths:
-        return pd.DataFrame(columns=list(VIDEO_COLUMNS.values()))
-    frames = []
-    for path in paths:
-        skip = 0
-        with open(path, encoding="utf-8-sig") as fh:
-            first = fh.readline()
-        if first and not first.lower().startswith("date"):
-            skip = 1
-        frames.append(read_tables([path], VIDEO_COLUMNS, [
-            "views", "watch_time_ms", "completion_rate", "average_watch_time_ms",
-            "estimated_revenue",
-        ], skiprows=skip))
-    video = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    if video.empty:
-        return video
-    video = video.dropna(subset=["date"])
-    video = video.drop_duplicates(subset=["date"], keep="first")
-    return video.sort_values("date").reset_index(drop=True)
-
-
 def load_exports(folder):
-    """Load every content/overview/video CSV in folder. Video may be missing."""
+    """Load content and overview CSVs. Other files in the folder are left alone."""
     if not os.path.isdir(folder):
         raise SystemExit(f"exports folder not found: {folder}")
     content = load_content(folder)
     overview = load_overview(folder)
-    video = load_video(folder)
     if content.empty and overview.empty:
         raise SystemExit(f"no content_*.csv or overview_*.csv in {folder}")
-    return {"content": content, "overview": overview, "video": video}
+    return {"content": content, "overview": overview}
 
 
 def clip_text(text, n=72):

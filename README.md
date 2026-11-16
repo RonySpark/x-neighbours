@@ -222,7 +222,7 @@ python3 -m unittest discover -s tests -v
 
 ## Content analytics
 
-A separate read-only script turns X Analytics CSV exports into a short Sunday paste-in. It does not call X. Put `content_*.csv` and `overview_*.csv` (and `video_*.csv` if you have it) in a folder:
+A separate read-only script turns X Analytics CSV exports into a short Sunday paste-in. It does not call X. Put `content_*.csv` and `overview_*.csv` in a folder:
 
 ```bash
 python3 content_analytics.py --exports ~/exports --out . --json

@@ -1,0 +1,66 @@
+{
+  "_comment": "FICTIONAL. One person with three waiting items, one mention with only referenced_posts, one back-and-forth.",
+  "data": [
+    {
+      "id": "3101",
+      "author_id": "201",
+      "created_at": "2026-11-13T06:00:00.000Z",
+      "text": "First hello from the same person.",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "2001"}],
+      "conversation_id": "2001"
+    },
+    {
+      "id": "3102",
+      "author_id": "201",
+      "created_at": "2026-11-13T07:00:00.000Z",
+      "text": "Second hello from the same person.",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "2001"}],
+      "conversation_id": "2001"
+    },
+    {
+      "id": "3103",
+      "author_id": "201",
+      "created_at": "2026-11-13T08:00:00.000Z",
+      "text": "Third hello from the same person.",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "2001"}],
+      "conversation_id": "2001"
+    },
+    {
+      "id": "3201",
+      "author_id": "202",
+      "created_at": "2026-11-13T09:00:00.000Z",
+      "text": "This mention only has referenced_posts.",
+      "referenced_posts": [{"type": "replied_to", "id": "2001"}],
+      "conversation_id": "2001"
+    },
+    {
+      "id": "3301",
+      "author_id": "203",
+      "created_at": "2026-11-13T04:00:00.000Z",
+      "text": "Older note in a back-and-forth.",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "2001"}],
+      "conversation_id": "2001"
+    },
+    {
+      "id": "3302",
+      "author_id": "203",
+      "created_at": "2026-11-13T10:00:00.000Z",
+      "text": "Latest note; owner already replied.",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "2001"}],
+      "conversation_id": "2001"
+    }
+  ],
+  "includes": {
+    "users": [
+      {"id": "201", "name": "Pat Wait", "username": "waitalot"},
+      {"id": "202", "name": "Quinn Posts", "username": "postsonly"},
+      {"id": "203", "name": "Riley Back", "username": "backforth"}
+    ]
+  },
+  "meta": {"result_count": 6}
+}

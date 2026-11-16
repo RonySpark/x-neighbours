@@ -1,0 +1,23 @@
+{
+  "_comment": "FICTIONAL. ISO created_at with milliseconds, the catch_record crash case.",
+  "data": [
+    {
+      "id": "82206",
+      "author_id": "206",
+      "created_at": "2026-11-13T05:50:50.000Z",
+      "text": "A note from Six Glen."
+    }
+  ],
+  "includes": {
+    "users": [
+      {
+        "id": "206",
+        "name": "Six Glen",
+        "username": "neighbour6"
+      }
+    ]
+  },
+  "meta": {
+    "result_count": 1
+  }
+}

@@ -62,7 +62,20 @@ def load_soft(pattern):
 
 
 def ts(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if isinstance(s, datetime):
+        when = s
+    else:
+        when = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+def iso_utc(value):
+    """Format a datetime or ISO string as UTC Z time via ts(). Empty if missing."""
+    if not value:
+        return ""
+    return ts(value).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def fmt_num(n):
@@ -86,6 +99,32 @@ def as_bool(value):
     if isinstance(value, str):
         return value.strip().lower() not in ("0", "false", "no", "off", "")
     return bool(value)
+
+
+def referenced(obj):
+    """Prefer referenced_tweets; fall back to referenced_posts. Ids are strings."""
+    if not isinstance(obj, dict):
+        return []
+    refs = obj.get("referenced_tweets")
+    if not refs:
+        refs = obj.get("referenced_posts")
+    out = []
+    for ref in refs or []:
+        if not isinstance(ref, dict):
+            continue
+        ref = dict(ref)
+        if ref.get("id") is not None:
+            ref["id"] = str(ref["id"])
+        out.append(ref)
+    return out
+
+
+def set_referenced(obj):
+    """Store referenced posts under referenced_tweets so later reads share one key."""
+    refs = referenced(obj)
+    if refs:
+        obj["referenced_tweets"] = refs
+    return obj
 
 
 def counted(n, singular, plural):
@@ -112,19 +151,19 @@ class Data:
             for post in doc.get("data") or []:
                 if not post.get("id"):
                     continue
-                post = dict(post)
+                post = set_referenced(dict(post))
                 post["id"] = str(post["id"])
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
                 if post.get("author_id", self.me) == self.me:
                     self.posts[post["id"]] = post
-                    for ref in post.get("referenced_tweets") or []:
+                    for ref in referenced(post):
                         if ref.get("type") == "replied_to" and ref.get("id"):
                             self.owner_replied_to.add(str(ref["id"]))
             self._users((doc.get("includes") or {}).get("users") or [])
         for _, doc in load(os.path.join(data_dir, "mentions_*.json")):
             for mention in doc.get("data") or []:
-                mention = dict(mention)
+                mention = set_referenced(dict(mention))
                 mid = mention.get("id")
                 if mid is not None:
                     mid = str(mid)
@@ -136,14 +175,6 @@ class Data:
                     mention["author_id"] = str(mention["author_id"])
                 if mention.get("in_reply_to_user_id") is not None:
                     mention["in_reply_to_user_id"] = str(mention["in_reply_to_user_id"])
-                refs = []
-                for ref in mention.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    mention["referenced_tweets"] = refs
                 self.mentions.append(mention)
             self._users((doc.get("includes") or {}).get("users") or [])
         for path, doc in load(os.path.join(data_dir, "likes_*.json")):
@@ -220,7 +251,7 @@ class Data:
             bucket = self.quotes.setdefault(pid, [])
             have = {item.get("id") for item in bucket}
             for post in doc.get("data") or []:
-                post = dict(post)
+                post = set_referenced(dict(post))
                 if post.get("id") is None:
                     continue
                 post["id"] = str(post["id"])
@@ -228,14 +259,6 @@ class Data:
                     continue
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
-                refs = []
-                for ref in post.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    post["referenced_tweets"] = refs
                 post["_on_post"] = pid
                 bucket.append(post)
                 have.add(post["id"])
@@ -249,7 +272,7 @@ class Data:
             self._users((doc.get("includes") or {}).get("users") or [])
             posts = []
             for post in doc.get("data") or []:
-                post = dict(post)
+                post = set_referenced(dict(post))
                 if post.get("id") is None or not post.get("created_at"):
                     continue
                 post["id"] = str(post["id"])
@@ -257,14 +280,6 @@ class Data:
                     post["author_id"] = str(post["author_id"])
                 if post.get("in_reply_to_user_id") is not None:
                     post["in_reply_to_user_id"] = str(post["in_reply_to_user_id"])
-                refs = []
-                for ref in post.get("referenced_tweets") or []:
-                    ref = dict(ref)
-                    if ref.get("id") is not None:
-                        ref["id"] = str(ref["id"])
-                    refs.append(ref)
-                if refs:
-                    post["referenced_tweets"] = refs
                 if is_original_post(post):
                     posts.append(post)
             if not posts:
@@ -287,7 +302,7 @@ class Data:
         for key in ("in_reply_to_tweet_id", "in_reply_to_status_id"):
             if post.get(key):
                 self.engaged.add(str(post[key]))
-        for ref in post.get("referenced_tweets") or []:
+        for ref in referenced(post):
             if not isinstance(ref, dict) or ref.get("id") is None:
                 continue
             kind = (ref.get("type") or "").lower()
@@ -304,7 +319,7 @@ class Data:
             self._add_owner_targets(post)
         for doc in load_soft(os.path.join(self.data_dir, "my_posts_*.json")):
             for post in doc.get("data") or []:
-                self._add_owner_targets(post)
+                self._add_owner_targets(set_referenced(dict(post)))
         for doc in load_soft(os.path.join(self.data_dir, "my_likes_*.json")):
             for post in doc.get("data") or []:
                 if isinstance(post, dict) and post.get("id") is not None:
@@ -356,7 +371,7 @@ class Data:
                 continue
             if not self._in_window(mention.get("created_at"), since, until):
                 continue
-            refs = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+            refs = [ref.get("id") for ref in referenced(mention)
                     if ref.get("type") == "replied_to"]
             if mention.get("in_reply_to_user_id") == self.me or any(ref in self.posts for ref in refs):
                 replies[mention["author_id"]] += 1
@@ -380,7 +395,7 @@ def is_original_post(post):
     text = post.get("text") or ""
     if text.startswith("RT @"):
         return False
-    for ref in post.get("referenced_tweets") or []:
+    for ref in referenced(post):
         kind = (ref.get("type") or "").lower()
         if kind in ("replied_to", "retweeted"):
             return False
@@ -852,9 +867,9 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
 
     for mention in data.mentions:
         author = mention.get("author_id")
-        refs = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+        refs = [ref.get("id") for ref in referenced(mention)
                 if ref.get("type") == "replied_to"]
-        quoted = [ref.get("id") for ref in mention.get("referenced_tweets") or []
+        quoted = [ref.get("id") for ref in referenced(mention)
                   if ref.get("type") == "quoted"]
         on_reply = next((ref for ref in refs if ref in data.posts), None)
         on_quote = next((ref for ref in quoted if ref in data.posts), None)
@@ -1181,7 +1196,6 @@ def catch_lines(person, now):
 
 def catch_record(person):
     latest = person.get("latest") or {}
-    created = latest.get("created_at")
     return {
         "name": person["name"],
         "username": person["username"],
@@ -1189,31 +1203,41 @@ def catch_record(person):
         "stranger": bool(person.get("stranger")),
         "text": snippet(latest.get("text")) or "Post",
         "url": person.get("latest_url") or "",
-        "created_at": created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if created else "",
+        "created_at": iso_utc(latest.get("created_at")),
         "avatar": avatar_url(person),
     }
 
 
 def greeting_rows(threads):
+    """One waiting row per person, and only if their latest message has no owner reply."""
     unanswered, answered = [], []
+
+    def when_of(item):
+        created = item.get("created_at")
+        return ts(created) if created else datetime.min.replace(tzinfo=timezone.utc)
+
     for thread in threads:
-        for item in thread["items"]:
-            created = item.get("created_at")
-            row = {
-                "name": thread["name"],
-                "username": thread["username"],
-                "good": bool(thread.get("good")),
-                "stranger": bool(thread.get("stranger")),
-                "kind": item.get("kind") or "reply",
-                "text": snippet(item.get("text")) or "Post",
-                "url": item.get("url") or "",
-                "on_text": snippet(item.get("on_text") or ""),
-                "created_at": created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if created else "",
-                "replied": bool(item.get("replied")),
-                "avatar": avatar_url(thread),
-                "_when": created or datetime.min.replace(tzinfo=timezone.utc),
-            }
-            (answered if row["replied"] else unanswered).append(row)
+        items = list(thread.get("items") or [])
+        if not items:
+            continue
+        items.sort(key=when_of, reverse=True)
+        latest = items[0]
+        created = latest.get("created_at")
+        row = {
+            "name": thread["name"],
+            "username": thread["username"],
+            "good": bool(thread.get("good")),
+            "stranger": bool(thread.get("stranger")),
+            "kind": latest.get("kind") or "reply",
+            "text": snippet(latest.get("text")) or "Post",
+            "url": latest.get("url") or "",
+            "on_text": snippet(latest.get("on_text") or ""),
+            "created_at": iso_utc(created),
+            "replied": bool(latest.get("replied")),
+            "avatar": avatar_url(thread),
+            "_when": when_of(latest),
+        }
+        (answered if row["replied"] else unanswered).append(row)
     unanswered.sort(key=lambda row: row["_when"], reverse=True)
     answered.sort(key=lambda row: row["_when"], reverse=True)
     return unanswered, answered

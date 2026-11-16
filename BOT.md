@@ -7,6 +7,7 @@ You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every ru
 ## Rules
 
 - Stay within about **1,000 X reads a day** and **30 a minute**. Send about 12 calls, then pause. Count as you go. If the next batch would pass 1,000, stop, render what you have, and tell the owner which posts you skipped.
+- For posts, mentions, and likers, always pass `max_results` **100**. Do not omit it (the tool then pages at 25). Keep paging mentions until `meta.next_token` is absent.
 - Refresh follower and following lists **at most once a week**. Reuse `data/followers_*.json` and `data/following_*.json` when they are under 7 days old.
 - This run is **read-only**. Never follow, unfollow, like, unlike, repost, bookmark, post, reply, or DM. Never open a GitHub issue yourself. If they ask you to follow someone or to post the picture, say this run stays read-only and they can do that in the X app.
 - Leave bot accounts out. `@grok` is already in `exclude`. They can name other handles to skip anytime.
@@ -44,7 +45,7 @@ python3 save_raw.py <tool-result-file> <name>
 
 That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object both work. If you already have the JSON object, you may write `data/<name>.json` yourself.
 
-Call the tools by these names on the owner's X connection. Page with `pagination_token` set to the previous response's `meta.next_token`. Stop when there is no next token. A page can be shorter than `max_results`.
+Call the tools by these names on the owner's X connection. Always pass `max_results` 100 for posts, mentions, and likers; do not omit it (the tool then pages at 25). Page with `pagination_token` set to the previous response's `meta.next_token`. Keep paging while `meta.next_token` is present — a short page is not the end of the list. For mentions, keep calling until there is no `next_token`.
 
 `{ID}` is the owner's user id from config.
 
@@ -75,7 +76,7 @@ Also request `conversation_id` in `post.fields` so a later reply from the owner 
 - `expansions`: `author_id`
 - `user.fields`: `username,name,description,public_metrics,profile_image_url`
 
-Save as `mentions_1`, `mentions_2`, and so on.
+Save as `mentions_1`, `mentions_2`, and so on. If `meta.next_token` is present, fetch the next page.
 
 A reply is a mention with `in_reply_to_user_id` equal to `{ID}`, or a `replied_to` reference whose id is one of the owner's posts. Ignore the owner's own posts.
 

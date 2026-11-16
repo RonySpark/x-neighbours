@@ -503,3 +503,65 @@ def funnel(posts, keywords=None):
     by_type.sort(key=lambda row: (-row["follow_rate"], -row["new_follows"], row["type"]))
     top, _bottom = ranked_posts(posts, "new_follows")
     return {"overall": overall, "by_type": by_type, "top_follows": top}
+
+
+def is_original(text):
+    return "original" in classify_post(text, [])
+
+
+def posting_streak(posts):
+    """Consecutive Adelaide days with at least one original post, ending at the latest."""
+    if posts is None or posts.empty:
+        return {"days": 0, "until": None}
+    originals = posts[posts["text"].map(is_original)]
+    if originals.empty:
+        return {"days": 0, "until": None}
+    days = set(originals["adelaide_date"].tolist())
+    latest = max(days)
+    cursor = latest
+    streak = 0
+    while cursor in days:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return {"days": streak, "until": latest.isoformat()}
+
+
+def pick_examples(posts):
+    """Do-more: best engagement rate among posts above median impressions."""
+    if posts is None or posts.empty:
+        return {"do_more": None, "underperformer": None, "median_impressions": None}
+    median_imp = float(posts["impressions"].median())
+    notable = posts[posts["impressions"] > median_imp]
+    if notable.empty:
+        notable = posts
+    best = notable.sort_values("engagement_rate", ascending=False).iloc[0]
+    worst = notable.sort_values("engagement_rate", ascending=True).iloc[0]
+    do_more = post_ref(best)
+    under = post_ref(worst)
+    if do_more["post_id"] == under["post_id"]:
+        under = None
+    return {
+        "do_more": do_more,
+        "underperformer": under,
+        "median_impressions": median_imp,
+    }
+
+
+def consistency(overview, content):
+    end = latest_export_date(overview, content)
+    this_span, prev_span = week_windows(end)
+    this_posts = in_days(content, *this_span)
+    prev_posts = in_days(content, *prev_span)
+    window_days = (this_span[1] - this_span[0]).days + 1
+    posts_this = int(len(this_posts)) if this_posts is not None else 0
+    posts_prev = int(len(prev_posts)) if prev_posts is not None else 0
+    examples = pick_examples(this_posts)
+    return {
+        "streak": posting_streak(content),
+        "window_days": window_days,
+        "posts_per_day": posts_this / window_days if window_days else 0.0,
+        "posts": change(posts_this, posts_prev),
+        "do_more": examples["do_more"],
+        "underperformer": examples["underperformer"],
+        "median_impressions": examples["median_impressions"],
+    }

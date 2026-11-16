@@ -177,5 +177,21 @@ class FunnelTest(unittest.TestCase):
         self.assertGreater(tesla["new_follows"], 0)
 
 
+class ConsistencyTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        data, _posts = this_week_posts()
+        cls.report = ca.consistency(data["overview"], data["content"])
+
+    def test_streak_posts_per_day_and_examples(self):
+        self.assertEqual(self.report["streak"]["days"], 7)
+        self.assertEqual(self.report["streak"]["until"], "2026-11-16")
+        self.assertAlmostEqual(self.report["posts_per_day"], 29 / 7)
+        self.assertEqual(self.report["posts"]["this"], 29)
+        self.assertEqual(self.report["posts"]["previous"], 7)
+        self.assertEqual(self.report["do_more"]["text"], "Is Tesla charging easier now?")
+        self.assertEqual(self.report["underperformer"]["text"], "Huge random spike")
+
+
 if __name__ == "__main__":
     unittest.main()

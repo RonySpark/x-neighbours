@@ -91,5 +91,37 @@ class WeeklyScorecardTest(unittest.TestCase):
         self.assertEqual(top_fol[0], "Should Tesla build in Adelaide?")
 
 
+class ContentTypeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        data = ca.load_exports(FIXTURES)
+        card = ca.scorecard(data["overview"], data["content"])
+        start, end = date.fromisoformat(card["this_week"][0]), date.fromisoformat(card["this_week"][1])
+        posts = ca.in_days(data["content"], start, end)
+        cls.types = ca.content_types(posts)
+        cls.labels = [row["type"] for row in cls.types]
+
+    def test_drops_types_with_fewer_than_three_posts_and_skips_media(self):
+        self.assertNotIn("reply", self.labels)
+        self.assertNotIn("media", self.labels)
+        self.assertIn("Tesla", self.labels)
+        self.assertIn("Adelaide", self.labels)
+        self.assertIn("question", self.labels)
+        self.assertIn("original", self.labels)
+        self.assertIn("thread", self.labels)
+        self.assertIn("link", self.labels)
+        self.assertIn("long", self.labels)
+
+    def test_medians_only_for_kept_types(self):
+        tesla = next(row for row in self.types if row["type"] == "Tesla")
+        self.assertGreaterEqual(tesla["posts"], 3)
+        self.assertGreater(tesla["median_impressions"], 0)
+        self.assertGreater(tesla["median_engagement_rate"], 0)
+
+    def test_keywords_come_from_config(self):
+        tags = ca.load_keywords(os.path.join(ROOT, "config.example.json"))
+        self.assertEqual(tags, ["Tesla", "Adelaide"])
+
+
 if __name__ == "__main__":
     unittest.main()

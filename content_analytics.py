@@ -5,7 +5,9 @@ Reads content_*.csv, overview_*.csv, and optional video_*.csv from an exports
 folder. Post time is not in the CSV; it is decoded from the Post id snowflake.
 """
 import glob
+import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -16,6 +18,10 @@ import x_neighbours as xn
 
 TWITTER_EPOCH_MS = 1288834974657
 ADELAIDE = ZoneInfo("Australia/Adelaide")
+DEFAULT_KEYWORDS = ["Tesla", "Adelaide"]
+MIN_TYPE_POSTS = 3
+SHORT_MAX = 80
+MEDIUM_MAX = 200
 
 CONTENT_COLUMNS = {
     "Post id": "post_id",
@@ -290,3 +296,73 @@ def scorecard(overview, content):
         "from_content": extra,
         "posts": by,
     }
+
+
+def load_keywords(config_path=None):
+    if not config_path:
+        return list(DEFAULT_KEYWORDS)
+    with open(config_path, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    tags = cfg.get("keyword_tags") if isinstance(cfg, dict) else None
+    if not tags:
+        return list(DEFAULT_KEYWORDS)
+    return [str(tag) for tag in tags if str(tag).strip()]
+
+
+def classify_post(text, keywords=None):
+    """Labels from the post text. Media is omitted: the CSV does not mark it."""
+    text = text or ""
+    stripped = text.lstrip()
+    labels = []
+    if re.search(r"https?://|t\.co", text, re.I):
+        labels.append("link")
+    if re.match(r"\d+\s*/", stripped) or "🧵" in text:
+        labels.append("thread")
+    if stripped.startswith("@"):
+        labels.append("reply")
+    else:
+        labels.append("original")
+    if "?" in text:
+        labels.append("question")
+    length = len(text)
+    if length <= SHORT_MAX:
+        labels.append("short")
+    elif length <= MEDIUM_MAX:
+        labels.append("medium")
+    else:
+        labels.append("long")
+    lower = text.lower()
+    for word in keywords or DEFAULT_KEYWORDS:
+        if word and word.lower() in lower:
+            labels.append(word)
+    return labels
+
+
+def content_types(posts, keywords=None, min_posts=MIN_TYPE_POSTS):
+    """Median impressions and engagement rate per type, dropping types with few posts."""
+    keywords = keywords or DEFAULT_KEYWORDS
+    if posts is None or posts.empty:
+        return []
+    rows = []
+    for _, post in posts.iterrows():
+        for label in classify_post(post.get("text", ""), keywords):
+            rows.append({
+                "type": label,
+                "impressions": post["impressions"],
+                "engagement_rate": post["engagement_rate"],
+            })
+    if not rows:
+        return []
+    grouped = pd.DataFrame(rows).groupby("type")
+    out = []
+    for label, group in grouped:
+        if len(group) < min_posts:
+            continue
+        out.append({
+            "type": label,
+            "posts": int(len(group)),
+            "median_impressions": float(group["impressions"].median()),
+            "median_engagement_rate": float(group["engagement_rate"].median()),
+        })
+    out.sort(key=lambda row: (-row["median_engagement_rate"], -row["median_impressions"], row["type"]))
+    return out

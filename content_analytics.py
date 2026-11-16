@@ -27,6 +27,7 @@ TWITTER_EPOCH_MS = 1288834974657
 ADELAIDE = ZoneInfo("Australia/Adelaide")
 DEFAULT_KEYWORDS = ["Tesla", "Adelaide"]
 MIN_TYPE_POSTS = 3
+SMALL_SAMPLE = 5
 SHORT_MAX = 80
 SNAPSHOT_STALE_DAYS = 7
 MEDIUM_MAX = 200
@@ -358,28 +359,33 @@ def hour_label(start, span=3):
     return f"{start:02d}:00-{start + span - 1:02d}:00"
 
 
-def posting_times(posts):
-    """Median impressions by Adelaide weekday and hour, after dropping the top 5%."""
-    empty = {
-        "kept": 0,
-        "dropped": 0,
-        "cutoff": None,
-        "pivot": {},
-        "best_weekday": None,
-        "best_block": None,
-    }
-    if posts is None or posts.empty:
-        return empty
-    n_drop = max(1, int(len(posts) * 0.05))
+def _drop_loudest(posts):
+    """Drop int(n * 0.05) posts. Zero when that is under 1, so a 3-post week is kept."""
+    n_drop = int(len(posts) * 0.05)
+    if n_drop < 1:
+        return posts.copy(), 0, None
     ranked = posts.sort_values("impressions", ascending=False)
     dropped_rows = ranked.iloc[:n_drop]
     kept = ranked.iloc[n_drop:].copy()
-    dropped = int(len(dropped_rows))
-    cutoff = float(dropped_rows["impressions"].min()) if dropped else None
     if kept.empty:
-        kept = posts.copy()
-        dropped = 0
-        cutoff = None
+        return posts.copy(), 0, None
+    return kept, int(len(dropped_rows)), float(dropped_rows["impressions"].min())
+
+
+def _slot_posts(kept, weekday, block):
+    if kept is None or kept.empty or (not weekday and not block):
+        return 0
+    mask = pd.Series(True, index=kept.index)
+    if weekday:
+        mask &= kept["adelaide_weekday"] == weekday["weekday"]
+    if block:
+        hours = {block["start_hour"], block["start_hour"] + 1, block["start_hour"] + 2}
+        mask &= kept["adelaide_hour"].isin(hours)
+    return int(mask.sum())
+
+
+def _time_slots(kept):
+    """Best weekday and 3-hour block. A block must start at an hour that has posts."""
     weekday_rows = []
     for name, group in kept.groupby("adelaide_weekday"):
         if len(group) < MIN_TYPE_POSTS:
@@ -394,8 +400,11 @@ def posting_times(posts):
         -row["median_impressions"], WEEKDAYS.index(row["weekday"])
         if row["weekday"] in WEEKDAYS else 99,
     ))
+    posted_hours = {int(hour) for hour in kept["adelaide_hour"].tolist()}
     blocks = []
     for start in range(0, 22):
+        if start not in posted_hours:
+            continue
         hours = {start, start + 1, start + 2}
         group = kept[kept["adelaide_hour"].isin(hours)]
         if len(group) < MIN_TYPE_POSTS:
@@ -416,14 +425,90 @@ def posting_times(posts):
             for hour, part in group.groupby("adelaide_hour")
         }
         pivot[name] = hours
+    weekday = weekday_rows[0] if weekday_rows else None
+    block = blocks[0] if blocks else None
+    sample = _slot_posts(kept, weekday, block)
+    if not sample:
+        sample = (block or weekday or {}).get("posts") or 0
     return {
         "kept": int(len(kept)),
+        "pivot": pivot,
+        "best_weekday": weekday,
+        "best_block": block,
+        "sample_posts": sample,
+    }
+
+
+def posting_times(posts, keywords=None):
+    """Median impressions by Adelaide weekday and hour, after dropping the top 5%."""
+    empty = {
+        "kept": 0,
+        "dropped": 0,
+        "cutoff": None,
+        "pivot": {},
+        "best_weekday": None,
+        "best_block": None,
+        "sample_posts": 0,
+        "by_type": [],
+    }
+    if posts is None or posts.empty:
+        return empty
+    kept, dropped, cutoff = _drop_loudest(posts)
+    overall = _time_slots(kept)
+    by_type = []
+    keywords = keywords or DEFAULT_KEYWORDS
+    tagged = [classify_post(text, keywords) for text in kept["text"].fillna("")]
+    labels = sorted({label for tags in tagged for label in tags})
+    for label in labels:
+        subset = kept[[label in tags for tags in tagged]]
+        if len(subset) < MIN_TYPE_POSTS:
+            continue
+        slot = _time_slots(subset)
+        if not slot["best_weekday"] and not slot["best_block"]:
+            continue
+        by_type.append({
+            "type": label,
+            "kept": slot["kept"],
+            "best_weekday": slot["best_weekday"],
+            "best_block": slot["best_block"],
+            "sample_posts": slot["sample_posts"],
+        })
+    by_type.sort(key=lambda row: (
+        -((row["best_block"] or row["best_weekday"] or {}).get("median_impressions") or 0),
+        row["type"],
+    ))
+    return {
+        "kept": overall["kept"],
         "dropped": dropped,
         "cutoff": cutoff,
-        "pivot": pivot,
-        "best_weekday": weekday_rows[0] if weekday_rows else None,
-        "best_block": blocks[0] if blocks else None,
+        "pivot": overall["pivot"],
+        "best_weekday": overall["best_weekday"],
+        "best_block": overall["best_block"],
+        "sample_posts": overall["sample_posts"],
+        "by_type": by_type,
     }
+
+
+def best_time_phrase(times):
+    weekday = (times.get("best_weekday") or {}).get("weekday")
+    block = times.get("best_block") or {}
+    if not weekday and not block:
+        return None
+    if weekday and block:
+        body = f"{weekday} {block.get('label', '')} Adelaide"
+    elif weekday:
+        body = f"{weekday} Adelaide"
+    else:
+        body = f"{block.get('label', '')} Adelaide"
+    n = times.get("sample_posts")
+    if n is None:
+        n = block.get("posts") or (times.get("best_weekday") or {}).get("posts")
+    if not n:
+        return body
+    note = f"{n} posts"
+    if n < SMALL_SAMPLE:
+        note += ", small sample"
+    return f"{body} ({note})"
 
 
 def ratio(num, den):
@@ -711,7 +796,7 @@ def analyze(folder, keywords=None, data_dir=None, me_id=None):
         "keywords": list(keywords),
         "scorecard": card,
         "types": content_types(this_posts, keywords),
-        "times": posting_times(this_posts),
+        "times": posting_times(this_posts, keywords),
         "funnel": funnel(this_posts, keywords),
         "consistency": consistency(overview, content),
     }
@@ -816,15 +901,20 @@ def render_markdown(report):
         type_bit
         + " Types with fewer than 3 posts are left out. Media is skipped because the CSV does not mark it."
     )
-    weekday = (times.get("best_weekday") or {}).get("weekday")
-    block = times.get("best_block") or {}
-    if weekday and block:
-        lines.append(
-            f"Best time to post: {weekday}, especially {block.get('label', '')} Adelaide, "
-            "after dropping the loudest 5% of posts."
-        )
-    elif weekday:
-        lines.append(f"Best weekday to post: {weekday} Adelaide.")
+    phrase = best_time_phrase(times)
+    if phrase:
+        drop_bit = ", after dropping the loudest 5% of posts" if times.get("dropped") else ""
+        lines.append(f"Best time to post: {phrase}{drop_bit}.")
+    type_bits = []
+    for row in times.get("by_type") or []:
+        bit = best_time_phrase(row)
+        if not bit:
+            continue
+        type_bits.append(f"{pretty_type(row['type'])} {bit}")
+        if len(type_bits) == 2:
+            break
+    if type_bits:
+        lines.append("By type: " + "; ".join(type_bits) + ".")
     overall = funnel_data["overall"]
     lines.append(
         f"Funnel: {fmt_rate(overall['expand_rate'])} of impressions opened the post, "

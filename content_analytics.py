@@ -95,7 +95,9 @@ def snowflake_utc(post_id):
 
 
 def csv_paths(folder, prefix):
-    return sorted(glob.glob(os.path.join(folder, f"{prefix}_*.csv")))
+    """Newest export first so overlapping ids/days keep the freshest file."""
+    paths = glob.glob(os.path.join(folder, f"{prefix}_*.csv"))
+    return sorted(paths, key=lambda path: (os.path.getmtime(path), path), reverse=True)
 
 
 def to_counts(frame, columns):
@@ -110,8 +112,9 @@ def to_counts(frame, columns):
 
 def read_tables(paths, rename, counts):
     frames = []
+    dtypes = {"Post id": str} if "Post id" in rename else None
     for path in paths:
-        frame = pd.read_csv(path, encoding="utf-8-sig")
+        frame = pd.read_csv(path, encoding="utf-8-sig", dtype=dtypes)
         frame = frame.rename(columns={key: rename[key] for key in rename if key in frame.columns})
         wanted = [col for col in rename.values() if col in frame.columns]
         frame = frame[wanted].copy()
@@ -132,7 +135,10 @@ def load_content(folder):
     posts = read_tables(paths, CONTENT_COLUMNS, CONTENT_COUNTS)
     if posts.empty:
         return posts
-    posts["post_id"] = posts["post_id"].astype(str)
+    posts["post_id"] = posts["post_id"].fillna("").astype(str).str.strip()
+    posts = posts[posts["post_id"].str.fullmatch(r"[0-9]+", na=False)].copy()
+    if posts.empty:
+        return posts
     posts["text"] = posts["text"].fillna("").astype(str)
     posts["link"] = posts["link"].fillna("").astype(str)
     posts = posts.drop_duplicates(subset=["post_id"], keep="first")

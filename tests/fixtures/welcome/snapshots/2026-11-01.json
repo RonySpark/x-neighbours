@@ -1,0 +1,59 @@
+[
+  {
+    "id": "101",
+    "username": "alice_vale",
+    "name": "Alice Vale",
+    "verified": true,
+    "verified_type": "blue",
+    "subscription_type": "Premium",
+    "created_at": "2019-03-01T00:00:00.000Z",
+    "description": "Fictional neighbour. Not a real account.",
+    "profile_image_url": "https://example.invalid/alice.png",
+    "public_metrics": {
+      "followers_count": 500,
+      "following_count": 80,
+      "tweet_count": 12,
+      "like_count": 3,
+      "listed_count": 1,
+      "media_count": 0
+    }
+  },
+  {
+    "id": "102",
+    "username": "bob_marsh",
+    "name": "Bob Marsh",
+    "verified": true,
+    "verified_type": "blue",
+    "subscription_type": "Premium",
+    "created_at": "2020-04-02T00:00:00.000Z",
+    "description": "Fictional neighbour. Not a real account.",
+    "profile_image_url": "https://example.invalid/bob.png",
+    "public_metrics": {
+      "followers_count": 200,
+      "following_count": 40,
+      "tweet_count": 8,
+      "like_count": 1,
+      "listed_count": 0,
+      "media_count": 0
+    }
+  },
+  {
+    "id": "103",
+    "username": "eve_plain",
+    "name": "Eve Plain",
+    "verified": false,
+    "verified_type": null,
+    "subscription_type": null,
+    "created_at": "2021-05-03T00:00:00.000Z",
+    "description": "Fictional neighbour. Not a real account.",
+    "profile_image_url": "https://example.invalid/eve.png",
+    "public_metrics": {
+      "followers_count": 40,
+      "following_count": 40,
+      "tweet_count": 4,
+      "like_count": 0,
+      "listed_count": 0,
+      "media_count": 0
+    }
+  }
+]

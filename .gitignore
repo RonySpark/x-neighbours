@@ -4,6 +4,7 @@ config.json
 # Raw X responses, downloaded avatars, and files the script writes.
 data/
 exports/
+/snapshots/
 .avatar_cache/
 report_*.md
 report_*.json

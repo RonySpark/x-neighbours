@@ -242,6 +242,7 @@ That writes `what_worked_week.md` and, with `--json`, `what_worked_week.json`. O
 | Path | Role |
 |---|---|
 | `x_neighbours.py` | Reports and pictures |
+| `followers_welcome.py` | New verified followers to welcome; `engaged_first` is yes if they engaged in the saved `--data` at all |
 | `content_analytics.py` | Weekly “What worked” section from Analytics CSVs |
 | `good_neighbours.py` | Add, remove, or list the personal good neighbours file |
 | `report_state.py` | Read or update the freshness clock in the bot store |

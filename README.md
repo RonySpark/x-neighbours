@@ -228,7 +228,7 @@ A separate read-only script turns X Analytics CSV exports into a short Sunday pa
 python3 content_analytics.py --exports ~/exports --out . --json
 ```
 
-That writes `what_worked_week.md` and, with `--json`, `what_worked_week.json`. Optional `--config config.json` picks up `keyword_tags` (Tesla and Adelaide if you leave them out). Real exports and the generated files are gitignored.
+That writes `what_worked_week.md` and, with `--json`, `what_worked_week.json`. Optional `--config config.json` picks up `keyword_tags` (Tesla and Adelaide if you leave them out). Optional `--data <dir>` joins the saved likers, reposters, and repliers to the follower snapshot already in that folder and adds follower vs non-follower share; leave it off and that part is skipped. Real exports and the generated files are gitignored.
 
 ## Privacy
 

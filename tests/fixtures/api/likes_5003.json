@@ -1,0 +1,7 @@
+{
+  "_comment": "FICTIONAL likers of last-week post 5003. Must not count in this week.",
+  "data": [
+    {"id": "101", "username": "ann", "name": "Ann"}
+  ],
+  "meta": {"result_count": 1}
+}

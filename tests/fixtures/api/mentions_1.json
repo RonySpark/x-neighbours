@@ -1,0 +1,75 @@
+{
+  "_comment": "FICTIONAL replies. Not real X data.",
+  "data": [
+    {
+      "id": "6101",
+      "author_id": "102",
+      "created_at": "2026-11-12T11:00:00Z",
+      "text": "follower reply",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "5001"}],
+      "conversation_id": "5001"
+    },
+    {
+      "id": "6102",
+      "author_id": "103",
+      "created_at": "2026-11-12T12:00:00Z",
+      "text": "non-follower reply one",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "5001"}],
+      "conversation_id": "5001"
+    },
+    {
+      "id": "6103",
+      "author_id": "103",
+      "created_at": "2026-11-14T12:00:00Z",
+      "text": "non-follower reply two",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "5002"}],
+      "conversation_id": "5002"
+    },
+    {
+      "id": "6104",
+      "author_id": "105",
+      "created_at": "2026-11-13T12:00:00Z",
+      "text": "one-off non-follower reply",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "5001"}],
+      "conversation_id": "5001"
+    },
+    {
+      "id": "6105",
+      "author_id": "103",
+      "created_at": "2026-11-08T12:00:00Z",
+      "text": "last week reply must not count",
+      "in_reply_to_user_id": "100",
+      "referenced_tweets": [{"type": "replied_to", "id": "5003"}],
+      "conversation_id": "5003"
+    },
+    {
+      "id": "6106",
+      "author_id": "104",
+      "created_at": "2026-11-13T15:00:00Z",
+      "text": "mention that is not a reply to the owner",
+      "conversation_id": "9999"
+    },
+    {
+      "id": "6107",
+      "author_id": "100",
+      "created_at": "2026-11-13T16:00:00Z",
+      "text": "owner reply must not count",
+      "in_reply_to_user_id": "103",
+      "referenced_tweets": [{"type": "replied_to", "id": "6102"}],
+      "conversation_id": "5001"
+    }
+  ],
+  "includes": {
+    "users": [
+      {"id": "102", "username": "ben", "name": "Ben"},
+      {"id": "103", "username": "cam", "name": "Cam"},
+      {"id": "104", "username": "dot", "name": "Dot"},
+      {"id": "105", "username": "eli", "name": "Eli"}
+    ]
+  },
+  "meta": {"result_count": 7}
+}

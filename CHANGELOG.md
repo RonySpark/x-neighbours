@@ -8,6 +8,7 @@ python3 version.py
 
 ## Unreleased
 
+- A depth-2 or depth-3 reply scores `thread_reply_factor` (default 0.5) times `reply_weight`, at most 3 per neighbour per root post. Depth 4 and deeper add none. `author_engaged_bonus` (default 1.0) times `reply_weight` applies once per neighbour per conversation when the owner replied there and the neighbour replied after. The Replies section, the waiting list, and open items still list only first-level replies and quotes.
 - Replies lists only a first-level reply or a quote on the owner's original post, newest first. A reply under the owner's own reply drops off. Waiting is still one row per person, and only when their latest message in that thread has no reply from the owner. ([#39](https://github.com/Skybatan/x-neighbours/pull/39))
 - The house-framed thank-you picture shows each neighbour's display name, with @username on the line below. A missing name stays @username alone. ([#38](https://github.com/Skybatan/x-neighbours/issues/38))
 - What's new shows each good neighbour's newest original post. A quote of their own counts. A reply or a plain repost does not. The age is that post's `created_at` against the current UTC time, not the report window. ([#36](https://github.com/Skybatan/x-neighbours/issues/36))

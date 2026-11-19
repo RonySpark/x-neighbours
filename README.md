@@ -92,6 +92,8 @@ The clone and `config.json` stay where they are. The good neighbours list and th
   "reply_weight": 3,
   "mutual_bonus": 2,
   "new_follower_credit": 1,
+  "thread_reply_factor": 0.5,
+  "author_engaged_bonus": 1.0,
   "waiting_rule": {
     "per_person": true,
     "latest_unreplied": true
@@ -119,6 +121,8 @@ The clone and `config.json` stay where they are. The good neighbours list and th
 | `repost_weight`, `quote_weight` | Optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight` |
 | `mutual_bonus` | Extra quiet points when you follow each other. Default 2. Not printed. `mutual_reply_bonus` still works as this key, once per person, and prints a rename warning on stderr |
 | `new_follower_credit` | Extra quiet points when they follow you and you do not follow them. Default 1. Not printed. `new_follower_bonus` still works as this key and prints a rename warning on stderr |
+| `thread_reply_factor` | Quiet points for a depth-2 or depth-3 reply in your thread. Each one adds this times `reply_weight`. Default 0.5. Depth 4 and deeper add none. At most 3 per neighbour per root post. Not printed. The Replies section still lists only first-level replies and quotes |
+| `author_engaged_bonus` | Quiet points once per neighbour per conversation, when you replied in that conversation and they replied after. Adds this times `reply_weight`. Default 1.0. Not printed |
 | `waiting_rule` | Replies waiting count. `per_person` (default true) counts each person once. `latest_unreplied` (default true) counts them only if their latest message in that thread has no reply from the owner |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |

@@ -239,11 +239,19 @@ def post_ref(row):
     }
 
 
+def _sorted_posts(posts, column, ascending):
+    """Metric first. Ties prefer the more recent post, then the larger post id."""
+    return posts.sort_values(
+        [column, "posted_at", "post_id"],
+        ascending=[ascending, False, False],
+    )
+
+
 def ranked_posts(posts, column, n=3):
     if posts is None or posts.empty:
         return [], []
-    high = posts.sort_values(column, ascending=False)
-    low = posts.sort_values(column, ascending=True)
+    high = _sorted_posts(posts, column, False)
+    low = _sorted_posts(posts, column, True)
     top = [post_ref(row) for _, row in high.head(n).iterrows()]
     bottom = [post_ref(row) for _, row in low.head(n).iterrows()]
     return top, bottom
@@ -613,8 +621,8 @@ def pick_examples(posts):
     notable = posts[posts["impressions"] > median_imp]
     if notable.empty:
         notable = posts
-    best = notable.sort_values("engagement_rate", ascending=False).iloc[0]
-    worst = notable.sort_values("engagement_rate", ascending=True).iloc[0]
+    best = _sorted_posts(notable, "engagement_rate", False).iloc[0]
+    worst = _sorted_posts(notable, "engagement_rate", True).iloc[0]
     do_more = post_ref(best)
     under = post_ref(worst)
     if do_more["post_id"] == under["post_id"]:

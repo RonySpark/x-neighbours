@@ -8,6 +8,7 @@ python3 version.py
 
 ## Unreleased
 
+- `new_follower_credit` goes only to someone absent from the follower snapshot on or before the week start and present in the newest snapshot. No snapshot that old means no credit and one note.
 - `--backfill-counts` adds missing `counts.csv` rows from follower snapshots, one Adelaide date each, and leaves an existing date as it is. A day with no following snapshot leaves following and mutuals blank. The trend skips a blank day for following, mutuals, and ratio. A second run writes the same file.
 - The neighbours report lists who unfollowed between follower snapshots, grouped by the later file's date in the config timezone. A blank timezone uses Australia/Adelaide.
 - `mutual_bonus` is added once for each reply from a mutual on an original post. A reply under the owner's own reply adds none.

@@ -1732,19 +1732,19 @@ def waiting_rule_from(value):
 THREAD_REPLY_CAP = 3
 
 
-def thread_reply_credit(data, since, until, reply_weight, thread_reply_factor,
-                        author_engaged_bonus):
-    posts = {}
+def reply_parent_id(post):
+    replied = referenced_ids(post, "replied_to")
+    if replied:
+        return replied[0]
+    for key in ("in_reply_to_tweet_id", "in_reply_to_status_id", "in_reply_to_post_id"):
+        value = post.get(key)
+        if value:
+            return str(value)
+    return None
 
-    def parent_of(post):
-        replied = referenced_ids(post, "replied_to")
-        if replied:
-            return replied[0]
-        for key in ("in_reply_to_tweet_id", "in_reply_to_status_id", "in_reply_to_post_id"):
-            value = post.get(key)
-            if value:
-                return str(value)
-        return None
+
+def thread_reply_credit(data, replies, since, until, reply_weight, factor, bonus):
+    posts = {}
 
     def add(raw):
         if not isinstance(raw, dict) or raw.get("id") is None:
@@ -1756,8 +1756,8 @@ def thread_reply_credit(data, since, until, reply_weight, thread_reply_factor,
         if post.get("conversation_id") is not None:
             post["conversation_id"] = str(post["conversation_id"])
         pid = post["id"]
-        current = posts.get(pid)
-        if current is None or (parent_of(current) is None and parent_of(post) is not None):
+        old = posts.get(pid)
+        if old is None or (reply_parent_id(old) is None and reply_parent_id(post)):
             posts[pid] = post
 
     for source in data.posts.values():
@@ -1774,118 +1774,88 @@ def thread_reply_credit(data, since, until, reply_weight, thread_reply_factor,
 
     roots = {str(pid) for pid in data.owner_original_ids}
     me = str(data.me)
-    owned = {str(pid) for pid in data.posts}
-    for source in data._my_posts:
-        if isinstance(source, dict) and source.get("id") is not None:
-            owned.add(str(source["id"]))
+    memo = {}
 
-    def chain(post):
-        steps = 0
-        current = str(post["id"])
-        seen = set()
-        while current not in seen:
-            seen.add(current)
-            node = posts.get(current)
-            if node is None:
-                return None
-            parent = parent_of(node)
-            if not parent:
-                return None
-            if parent in roots:
-                return steps + 1, parent
-            if parent not in posts:
-                conv = node.get("conversation_id")
-                if conv in roots:
-                    return steps + 2, conv
-                return None
-            current = parent
-            steps += 1
-        return None
-
-    def place(post):
-        conv = post.get("conversation_id")
-        if conv is not None and conv not in roots:
+    def place(pid, seen):
+        if pid in memo:
+            return memo[pid]
+        node = posts.get(pid)
+        if node is None or pid in seen:
             return None
-        found = chain(post)
-        if not found:
-            return None
-        depth, root = found
-        if conv is not None and root != conv:
-            return None
-        return depth, conv or root
-
-    def owner_authored(post):
-        author = post.get("author_id")
-        if author is not None:
-            return str(author) == me
-        return str(post.get("id")) in owned
-
-    def owner_reply_roots(post):
-        if not owner_authored(post):
-            return []
-        pid = str(post["id"])
-        found = []
-        conv = post.get("conversation_id")
-        if conv is not None and conv in roots and pid != conv:
-            found.append(conv)
-        found_chain = chain(post)
-        if found_chain:
-            root = found_chain[1]
-            if pid != root and root not in found:
-                found.append(root)
+        parent = reply_parent_id(node)
+        if parent in roots:
+            found = (1, parent)
+        elif parent and parent in posts:
+            seen.add(pid)
+            below = place(parent, seen)
+            found = (below[0] + 1, below[1]) if below else stopped(node)
+        else:
+            found = stopped(node)
+        memo[pid] = found
         return found
 
-    scored = []
-    for post in posts.values():
-        if parent_of(post) is None:
+    def stopped(node):
+        root = node.get("conversation_id")
+        parent = reply_parent_id(node)
+        if root not in roots and parent in posts:
+            root = posts[parent].get("conversation_id")
+        if root in roots and str(node.get("id")) != root:
+            return (2, root)
+        return None
+
+    rows = []
+    seen_ids = set()
+    for reply in replies:
+        pid = str(reply.get("id") or "")
+        if not pid or pid in seen_ids:
             continue
+        seen_ids.add(pid)
+        post = posts.get(pid) or reply
         author = str(post.get("author_id") or "")
         if hidden_user(data, author):
             continue
         if not data._in_window(post.get("created_at"), since, until):
             continue
-        placed = place(post)
-        conv = post.get("conversation_id")
-        if conv is not None:
-            if conv not in roots:
-                continue
-            root = conv
-        elif placed:
-            root = placed[1]
-        else:
+        found = place(pid, set())
+        if not found:
             continue
-        depth = placed[0] if placed else None
-        scored.append((author, root, depth, ts(post["created_at"]), post["id"]))
-
-    buckets = defaultdict(list)
-    for author, root, depth, when, pid in scored:
-        if depth in (2, 3):
-            buckets[(author, root)].append((when, pid))
+        depth, root = found
+        if post.get("conversation_id") not in (None, root):
+            continue
+        rows.append((author, root, depth, ts(post["created_at"]), pid))
 
     credit = defaultdict(float)
-    factor_points = thread_reply_factor * reply_weight
-    if factor_points:
-        for (author, _root), rows in buckets.items():
-            rows.sort()
-            credit[author] += factor_points * len(rows[:THREAD_REPLY_CAP])
-
-    bonus_points = author_engaged_bonus * reply_weight
-    if bonus_points:
-        owner_times = defaultdict(list)
+    if factor:
+        buckets = defaultdict(list)
+        for author, root, depth, when, pid in rows:
+            if depth in (2, 3):
+                buckets[(author, root)].append((when, pid))
+        each = factor * reply_weight
+        for (author, _root), group in buckets.items():
+            group.sort()
+            credit[author] += each * len(group[:THREAD_REPLY_CAP])
+    if bonus:
+        times = defaultdict(list)
         for post in posts.values():
-            created = post.get("created_at")
-            if not created:
+            author = post.get("author_id")
+            if author is not None and str(author) != me:
                 continue
-            when = ts(created)
-            for root in owner_reply_roots(post):
-                owner_times[root].append(when)
-        granted = set()
-        for author, root, _depth, when, _pid in scored:
-            if (author, root) in granted:
+            if author is None and str(post.get("id")) not in data.posts:
                 continue
-            if any(when > owner_when for owner_when in owner_times.get(root, ())):
-                granted.add((author, root))
-                credit[author] += bonus_points
+            if not post.get("created_at"):
+                continue
+            found = place(str(post["id"]), set())
+            if found and str(post["id"]) != found[1]:
+                times[found[1]].append(ts(post["created_at"]))
+        grant = bonus * reply_weight
+        given = set()
+        for author, root, _depth, when, _pid in rows:
+            key = (author, root)
+            if key in given:
+                continue
+            if any(when > stamp for stamp in times.get(root, ())):
+                given.add(key)
+                credit[author] += grant
     return {uid: value for uid, value in credit.items() if value}
 
 
@@ -1924,23 +1894,27 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         })
 
     owner_posts = data.owner_post_ids()
+    thread_replies = []
     for mention in data.mentions:
         author = mention.get("author_id")
         parent = next(iter(referenced_ids(mention, "replied_to")), None)
-        # Top-level only: the direct parent is one of the owner's original posts.
-        # A later reply in the thread, whose parent is the owner's own reply, does not count.
+        # The report lists a reply only when its direct parent is an owner original.
         if parent and parent in data.owner_original_ids:
             add_item("reply", mention, author, parent)
             continue
         if parent:
+            thread_replies.append(mention)
             continue
         quoted = next((pid for pid in referenced_ids(mention, "quoted") if pid in owner_posts), None)
         if quoted:
             add_item("quote", mention, author, quoted)
+        elif str(mention.get("in_reply_to_user_id") or "") == str(data.me):
+            thread_replies.append(mention)
     for pid, quotes in data.quotes.items():
         for quote in quotes:
             parent = next(iter(referenced_ids(quote, "replied_to")), None)
             if parent and parent not in data.owner_original_ids:
+                thread_replies.append(quote)
                 continue
             if parent:
                 add_item("reply", quote, quote.get("author_id"), parent)
@@ -1976,7 +1950,8 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             note_missing_follower_baseline()
         fresh = set()
     credit = thread_reply_credit(
-        data, since, until, reply_weight, thread_reply_factor, author_engaged_bonus)
+        data, thread_replies, since, until, reply_weight,
+        thread_reply_factor, author_engaged_bonus)
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0

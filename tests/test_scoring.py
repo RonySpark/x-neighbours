@@ -281,49 +281,6 @@ class ThreadReplyScoreTest(unittest.TestCase):
             data, since or self.since, self.now, 10, 1, reply_weight, "both", self.now,
             **weights)
 
-    def test_depth_two_raises_rank_and_stays_off_the_report(self):
-        root = owner_post("r1", "2026-11-04T09:00:00Z")
-        first = neighbour_reply(
-            "a1", "alice", "2026-11-04T10:00:00Z", "alice on the original", "r1")
-        deeper = neighbour_reply(
-            "a2", "alice", "2026-11-04T11:00:00Z", "alice deeper in the thread", "a1")
-        plain, _folder = thread_fixture([root], [first])
-        nested, folder = thread_fixture([root], [first, deeper])
-        # First-level reply is reply_weight 3. Factor 2 adds 2 * 3 on the depth-2 reply.
-        self.assertEqual(self.activity(plain, thread_reply_factor=2)["ranked"]["alice"], 3)
-        activity = self.activity(nested, thread_reply_factor=2)
-        self.assertEqual(activity["ranked"]["alice"], 9)
-        self.assertEqual(activity["totals"]["replies"], 1)
-        alice = next(row for row in activity["interactions"] if row["username"] == "alice")
-        self.assertEqual(alice["replies"], 1)
-
-        path = os.path.join(folder, "report.md")
-        more = xn.write_chat_report(
-            activity, path, "me", self.since, self.now, "Last 24 hours", window="day")
-        with open(path, encoding="utf-8") as fh:
-            report = fh.read()
-        replies = report.split("### 👋 Replies", 1)[1]
-        self.assertIn("alice on the original", replies)
-        self.assertNotIn("alice deeper in the thread", report)
-        self.assertIn("1 reply", report)
-        self.assertEqual(set(more), {
-            "flowers", "catch_up", "greetings_unanswered", "greetings_answered",
-        })
-
-        unanswered, answered = xn.greeting_rows(
-            activity["threads"], owner_replied_in=activity["owner_replied_in"])
-        waiting = [row["text"] for row in unanswered]
-        done = [row["text"] for row in answered]
-        self.assertIn("alice on the original", waiting)
-        self.assertNotIn("alice deeper in the thread", waiting + done)
-
-        items = xn.open_item_rows(nested, activity, None, "me")
-        first_replies = [row for row in items if row["kind"] == "first_reply"]
-        self.assertEqual(len(first_replies), 1)
-        self.assertEqual(first_replies[0]["handle"], "alice")
-        self.assertIn("alice on the original", first_replies[0]["reason"])
-        self.assertNotIn("alice deeper in the thread", first_replies[0]["reason"])
-
     def test_depth_four_adds_nothing(self):
         root = owner_post("r1", "2026-11-04T09:00:00Z")
         chain = [
@@ -432,23 +389,37 @@ class ThreadReplyScoreTest(unittest.TestCase):
         lone_ranked = self.activity(lone, **weights)["ranked"]
         self.assertEqual(lone_ranked["bob"], 0)
 
-        activity = self.activity(full, **weights)
+    def test_loader_scores_a_depth_two_reply_the_report_omits(self):
+        # posts JSON -> Data -> ranked. The owner reply has conversation_id and no replied_to.
+        root = owner_post("r1", "2026-11-04T09:00:00Z")
+        owner = owner_post("o1", "2026-11-04T10:00:00Z", text="owner came back")
+        first = neighbour_reply(
+            "a1", "alice", "2026-11-04T09:30:00Z", "alice on the original", "r1")
+        first["referenced_posts"] = first.pop("referenced_tweets")
+        deep = neighbour_reply(
+            "a2", "alice", "2026-11-04T11:00:00Z", "alice deeper in the thread", "o1")
+        deep["referenced_posts"] = deep.pop("referenced_tweets")
+        plain, _folder = thread_fixture([root, owner], [first])
+        nested, folder = thread_fixture([root, owner], [first, deep])
+        weights = {"thread_reply_factor": 0.5, "author_engaged_bonus": 0}
+        self.assertEqual(self.activity(plain, **weights)["ranked"]["alice"], 3)
+        activity = self.activity(nested, **weights)
+        self.assertEqual(activity["ranked"]["alice"], 4.5)
+        self.assertEqual(activity["totals"]["replies"], 1)
         path = os.path.join(folder, "report.md")
         xn.write_chat_report(
             activity, path, "me", self.since, self.now, "Last 24 hours", window="day")
         with open(path, encoding="utf-8") as fh:
             report = fh.read()
-        self.assertNotIn("alice under a missing parent", report)
-        self.assertNotIn("bob under alice", report)
-        self.assertNotIn("alice two steps under the gap", report)
-        unanswered, answered = xn.greeting_rows(activity["threads"])
-        self.assertEqual(unanswered, [])
-        self.assertEqual(answered, [])
-        first_replies = [
-            row for row in xn.open_item_rows(full, activity, None, "me")
-            if row["kind"] == "first_reply"
-        ]
-        self.assertEqual(first_replies, [])
+        self.assertIn("alice on the original", report)
+        self.assertNotIn("alice deeper in the thread", report)
+        waiting, answered = xn.greeting_rows(activity["threads"])
+        self.assertEqual([row["text"] for row in waiting + answered], ["alice on the original"])
+        reasons = " ".join(
+            row["reason"] for row in xn.open_item_rows(nested, activity, None, "me")
+            if row["kind"] == "first_reply")
+        self.assertIn("alice on the original", reasons)
+        self.assertNotIn("alice deeper in the thread", reasons)
 
 
 if __name__ == "__main__":

@@ -78,6 +78,9 @@ class ScoringTest(unittest.TestCase):
         self.data = sample_data()
         self.since = xn.ts("2026-11-04T00:00:00Z")
         self.now = xn.ts("2026-11-04T18:00:00Z")
+        note = getattr(xn, "note_missing_follower_baseline", None)
+        if note is not None:
+            note.done = False
 
     def ranked(self, **weights):
         activity = xn.build_activity(
@@ -191,16 +194,22 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(activity["ranked"]["u1"], 26)
 
     def test_new_follower_credit_once_for_follows_you(self):
-        ranked = self.ranked(new_follower_credit=5)
+        with redirect_stderr(io.StringIO()) as err:
+            ranked = self.ranked(new_follower_credit=5)
+        # No snapshot covers the week start, so the follows-you person scores activity only.
         self.assertEqual(ranked["u1"], 7)
-        self.assertEqual(ranked["u2"], 13)
+        self.assertEqual(ranked["u2"], 8)
+        self.assertIn(
+            "No follower snapshot at or before the week start.", err.getvalue())
 
     def test_mutual_new_follower_credited_once(self):
-        ranked = self.ranked(mutual_bonus=2, new_follower_credit=1)
+        with redirect_stderr(io.StringIO()):
+            ranked = self.ranked(mutual_bonus=2, new_follower_credit=1)
         # u1 is a mutual. Activity 7 plus 2 for each of the two replies on the original.
+        # New-follower credit is not added on top of that.
         self.assertEqual(ranked["u1"], 11)
-        # u2 follows the owner only. Activity 8 + credit 1, not 8+1+1.
-        self.assertEqual(ranked["u2"], 9)
+        # u2 follows the owner only, and there is no week-start snapshot. Activity 8.
+        self.assertEqual(ranked["u2"], 8)
 
     def test_connection_status_marks_mutual_without_lists(self):
         folder = tempfile.mkdtemp(prefix="xn-mutual-")

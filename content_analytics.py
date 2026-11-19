@@ -596,21 +596,20 @@ def is_original(text):
     return "original" in classify_post(text, [])
 
 
-def posting_streak(posts):
-    """Consecutive Adelaide days with at least one original post, ending at the latest."""
+def posting_streak(posts, end):
+    """Consecutive Adelaide days with at least one original post, ending at `end`."""
     if posts is None or posts.empty:
         return {"days": 0, "until": None}
     originals = posts[posts["text"].map(is_original)]
     if originals.empty:
         return {"days": 0, "until": None}
     days = set(originals["adelaide_date"].tolist())
-    latest = max(days)
-    cursor = latest
+    cursor = end
     streak = 0
     while cursor in days:
         streak += 1
         cursor -= timedelta(days=1)
-    return {"days": streak, "until": latest.isoformat()}
+    return {"days": streak, "until": end.isoformat() if streak else None}
 
 
 def pick_examples(posts):
@@ -644,7 +643,7 @@ def consistency(overview, content):
     posts_prev = int(len(prev_posts)) if prev_posts is not None else 0
     examples = pick_examples(this_posts)
     return {
-        "streak": posting_streak(content),
+        "streak": posting_streak(content, end),
         "window_days": window_days,
         "posts_per_day": posts_this / window_days if window_days else 0.0,
         "posts": change(posts_this, posts_prev),

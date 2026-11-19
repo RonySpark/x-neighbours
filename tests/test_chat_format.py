@@ -293,11 +293,11 @@ class CatchRecordTest(unittest.TestCase):
             "username": "nova_lane",
             "latest": {
                 "text": "A paper street with no cars, only chairs.",
-                "created_at": "2026-11-04T16:30:00Z",
+                "created_at": "2026-11-13T05:50:50.000Z",
             },
             "latest_url": "https://x.com/nova_lane/status/83001",
         })
-        self.assertEqual(row["created_at"], "2026-11-04T16:30:00Z")
+        self.assertEqual(row["created_at"], "2026-11-13T05:50:50Z")
 
     def test_datetime_created_at_still_formats(self):
         when = xn.ts("2026-11-04T16:30:00Z")
@@ -330,6 +330,43 @@ class CatchRecordTest(unittest.TestCase):
         self.assertGreater(len(more["catch_up"]), 0)
         for row in more["catch_up"]:
             self.assertRegex(row["created_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+class GreetingRowsTest(unittest.TestCase):
+    def test_counts_once_per_person_when_latest_is_unreplied(self):
+        thread = {
+            "name": "Pat Wait",
+            "username": "waitalot",
+            "items": [
+                {"id": "3", "kind": "reply", "text": "third", "url": "u3",
+                 "created_at": xn.ts("2026-11-13T08:00:00Z"), "replied": False},
+                {"id": "2", "kind": "reply", "text": "second", "url": "u2",
+                 "created_at": xn.ts("2026-11-13T07:00:00Z"), "replied": False},
+                {"id": "1", "kind": "reply", "text": "first", "url": "u1",
+                 "created_at": xn.ts("2026-11-13T06:00:00Z"), "replied": False},
+            ],
+        }
+        unanswered, answered = xn.greeting_rows([thread])
+        self.assertEqual(len(unanswered), 1)
+        self.assertEqual(unanswered[0]["username"], "waitalot")
+        self.assertEqual(unanswered[0]["text"], "third")
+        self.assertEqual(answered, [])
+
+    def test_back_and_forth_is_not_waiting_when_latest_was_replied(self):
+        thread = {
+            "name": "Riley Back",
+            "username": "backforth",
+            "items": [
+                {"id": "3302", "kind": "reply", "text": "latest", "url": "u2",
+                 "created_at": xn.ts("2026-11-13T10:00:00Z"), "replied": True},
+                {"id": "3301", "kind": "reply", "text": "older", "url": "u1",
+                 "created_at": xn.ts("2026-11-13T04:00:00Z"), "replied": False},
+            ],
+        }
+        unanswered, answered = xn.greeting_rows([thread])
+        self.assertEqual(unanswered, [])
+        self.assertEqual(len(answered), 1)
+        self.assertEqual(answered[0]["text"], "latest")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ description: >-
 
 You run this for the owner of this bot. It shows who replied, quoted, liked, and reposted, then who to catch up with. Every report ends with a house-framed neighbours picture and a thank-you link.
 
-You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every rule in this file on every run. The same text is in `BOT.md` at the root of the repo.
+You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every rule in this file on every run. This file is the only copy of these instructions. The root `BOT.md` only points here.
 
 ## Rules
 
@@ -33,6 +33,15 @@ Weights are a quiet setting. Scoring lives in `config.json` (see [README.md](../
 - `new_follower_credit` (default 1): extra points when they follow you and you do not follow them.
 - `waiting_rule` (default `{ "per_person": true, "latest_unreplied": true }`): count each person once. They are waiting only if their latest message in that thread has no reply from the owner.
 
+## Upgrading
+
+An already-installed bot updates the clone it already has. Leave `config.json`, `data/`, and the bot store as they are.
+
+1. From the clone, run `python3 version.py` and keep the line.
+2. `git pull --ff-only`. When `requirements.txt` changed, run `python3 -m pip install -r requirements.txt`.
+3. Run `python3 version.py` again. When the line changed, read `CHANGELOG.md` and tell the owner the new version in one line.
+4. Leave the good neighbours file and `state.json` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
+
 ## First run
 
 The only step is to make sure **one** X account is connected. If the X tools are missing, ask them to tap **Connect** on the X card in this chat. Do not ask for a password, API key, or bearer token, and do not open x.com to log them in. Stop until that one account is connected.
@@ -40,7 +49,7 @@ The only step is to make sure **one** X account is connected. If the X tools are
 Then do the rest with the defaults. Do not ask setup questions.
 
 1. `get_users_me` with `user.fields=id,name,username,description,profile_image_url`. That is the account. Write `handle` and `user_id` into `config.json` copied from `config.example.json`. If you know their timezone, set `timezone` to an IANA name such as `Europe/Stockholm`. Leave `fresh_hours` unset unless they ask for a fixed interval. Leave every other key as in the example.
-2. Clone or `git pull --ff-only` this repo, install Pillow, and fetch only the last `first_run_days` from config (default **2 days**, 48 hours). Use the tool calls below with that `START`. Do not fetch a full week on the first run. Never commit `config.json` or `data/`.
+2. Clone or `git pull --ff-only` this repo, install dependencies with `python3 -m pip install -r requirements.txt`, and fetch only the last `first_run_days` from config (default **2 days**, 48 hours). Use the tool calls below with that `START`. Do not fetch a full week on the first run. Never commit `config.json` or `data/`. A later update follows “Upgrading”.
 3. Run `python3 x_neighbours.py --now <T> --first-run --snapshot-dir /workspace/content/followers --good-neighbours <path> --state <state path>`. Send the report as two messages, exactly as in “How to send a report”. Do not post the thank-you yourself. If stdout has `add_question`, send that one card after those two messages. Do not ask again in prose.
 4. Create both routines with no question: every day at 9:00 AM (last 24 hours, picture included), and Mondays at 9:00 AM (last 7 days, reusing daily files, picture included). Use their timezone, or UTC if you don't know it. If they only want a weekly report, skip the daily routine and follow Weekly-only in Routines: one Monday job at 9:00 AM covering the last 7 days, fetching likers, reposters, and quoters for every post with that count above 0.
 5. Close with one line: daily and Monday reports are set (or only Monday, if weekly-only); anything can be changed by asking (time, period, top N, likes only, replies only, per post, per day); say 'add @someone to my good neighbours' to keep up with them here.
@@ -49,7 +58,7 @@ Do not send a settings list.
 
 ## Each run
 
-A manual run can fetch one window in a single pass. The daily and Monday routines below split the work so Monday reuses that morning's files. Work in the clone. Pick a UTC timestamp `T` when you start fetching, such as `2026-11-04T18:00:00Z`. You will pass `T` as `--now`.
+A manual run can fetch one window in a single pass. The daily and Monday routines below split the work so Monday reuses that morning's files. Work in the clone. Pick a UTC timestamp `T` when you start fetching. `T` is the actual current UTC time (`date -u +%Y-%m-%dT%H:%M:%SZ`). Pass that as `--now`. Do not reuse a timestamp from an earlier run, from `state.json`, or from a sample such as `2026-11-04T18:00:00Z` (that value is only a shape example). What's new does not age posts from `--now`; a stale `--now` still shifts the Flowers and Replies window.
 
 One fetch covers every window in config. When `week` is on, `START` is `T` minus 7 days. When the config is day-only, `START` is `T` minus 24 hours. The script cuts the 24-hour window out of the same files, so do not fetch twice.
 
@@ -63,7 +72,7 @@ That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object
 
 Use the built-in public X tools for `get_users_posts`, `get_users_mentions`, `get_posts_reposted_by`, `get_posts_quoted_posts`, and `get_posts_by_ids`. Use the owner's X plugin for likers (`get_posts_liking_users`), liked posts (`get_users_liked_posts`), and bookmarks. `get_users_me` and `get_users_by_username` stay on the owner's plugin. Do not call `get_users_me_followers` or `get_users_me_following`. Always set `max_results` to **100** for posts, mentions, and likers. Do not omit it (the tool then pages at 25) and do not set 25. Page with `pagination_token` set to the previous response's `meta.next_token`. Keep paging while `meta.next_token` is present. Some tools cap a page at 25 even when `max_results` is 100; a short page is not the end of the list. Stop only when there is no next token, or the day's budget is gone. For mentions, keep calling until there is no `next_token`.
 
-Request `referenced_posts` in `post.fields` (the expansion is also `referenced_posts`). Older dumps may say `referenced_tweets`. The loader prefers `referenced_tweets` and falls back to `referenced_posts`.
+Request `referenced_posts` in `post.fields` (the expansion is also `referenced_posts`). Older dumps may say `referenced_tweets`. The loader prefers `referenced_tweets` and falls back to `referenced_posts`. Save the whole response, including `includes`.
 
 When the tool allows it, add `connection_status` to `user.fields` so mutual-follow and new-follower scoring can use it.
 
@@ -77,13 +86,13 @@ When the tool allows it, add `connection_status` to `user.fields` so mutual-foll
 - `start_time`: `START`
 - `exclude`: `retweets`
 - `max_results`: `100` (never 25; never omit this)
-- `post.fields`: `created_at,public_metrics,in_reply_to_user_id,referenced_posts`
-- `expansions`: `author_id`
+- `post.fields`: `created_at,public_metrics,in_reply_to_user_id,referenced_tweets,conversation_id`
+- `expansions`: `author_id,referenced_posts`
 - `user.fields`: `username,name,profile_image_url,public_metrics`
 
-Save as `posts_1`, `posts_2`, and so on. On a scheduled run, use `posts_day_*` or `posts_week_*` as the Routines section says. The script loads every `posts_*.json`.
+Save as `posts_1`, `posts_2`, and so on. On a scheduled run, use `posts_day_*` or `posts_week_*` as the Routines section says. The script loads every `posts_*.json`. Do not pass `exclude=replies`. The owner's own replies have to be in these pages so Replies can tell an original post from a reply, and can see which replies the owner already answered.
 
-Also request `conversation_id` in `post.fields` so a later reply from the owner can be matched to the item.
+`referenced_posts` is how these X tools expand the parent post. Some payloads call that list `referenced_tweets`. Pass both names, and save the whole response, including `includes`. The script reads either name. `conversation_id` is the thread root: it matches the post id on an original post and differs on a reply.
 
 ### 2. Mentions
 
@@ -92,13 +101,21 @@ Also request `conversation_id` in `post.fields` so a later reply from the owner 
 - `id`: `{ID}`
 - `start_time`: `START`
 - `max_results`: `100` (never 25; never omit this)
-- `post.fields`: `created_at,author_id,in_reply_to_user_id,referenced_posts,conversation_id`
-- `expansions`: `author_id`
+- `post.fields`: `created_at,author_id,text,in_reply_to_user_id,referenced_tweets,conversation_id`
+- `expansions`: `author_id,referenced_posts`
 - `user.fields`: `username,name,description,public_metrics,profile_image_url`
 
-Save as `mentions_1`, `mentions_2`, and so on. If `meta.next_token` is present, fetch the next page. Keep going until there is no next token.
+Save as `mentions_1`, `mentions_2`, and so on, including `includes`. If `meta.next_token` is present, fetch the next page. Keep going until there is no next token.
 
-A reply is a mention with `in_reply_to_user_id` equal to `{ID}`, or a `replied_to` reference whose id is one of the owner's posts. Some X tools return `referenced_posts` instead of `referenced_tweets`. The script accepts either (tweets first). Ignore the owner's own posts.
+`expansions=referenced_posts` puts each mention's direct parent in `includes.posts` or `includes.tweets`. The mention itself still needs `referenced_tweets` or `referenced_posts` with `type` `replied_to` and that parent's id. Without the parent id, the script cannot tell a top-level reply from a later one in the thread.
+
+A Replies entry is only a top-level reply or a quote of the owner's post:
+
+- Top-level reply: the direct parent (`referenced_tweets` or `referenced_posts`, type `replied_to`) is one of the owner's original posts. Original means the owner's own post, not one of the owner's replies. If someone replies, the owner replies to them, and they reply back, that later reply's parent is the owner's reply, so it does not count.
+- Quote: type `quoted` points at one of the owner's posts, and the quote is not itself a reply to something else.
+- Never the owner's own posts or replies, even when they show up in mentions.
+
+`in_reply_to_user_id` equal to `{ID}` is not enough. That is also true of a reply under the owner's own reply. Waiting rules sit on top of this filter: one row per person, and only when their latest first-level message in that thread has no reply from the owner.
 
 ### 3. Likers
 
@@ -133,17 +150,30 @@ Do this once per run, before the catch-up pages, and only if today's files are m
 
 `get_users_liked_posts` — `id` `{ID}`, `max_results` 20, `post.fields=id,created_at,author_id`. Save as `my_likes_1`. If `meta.next_token` is present, save one more page as `my_likes_2`, then stop.
 
-`get_users_posts` — `id` `{ID}`, `max_results` 20, no `exclude` (replies and reposts have to be in the page), `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts,conversation_id`. Save as `my_posts_1`. One page only.
+`get_users_posts` — `id` `{ID}`, `max_results` 20, no `exclude` (replies and reposts have to be in the page), `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`. Save as `my_posts_1`. One page only.
 
-Those files, plus replies already in `posts_*.json`, are how Catch up hides a post the owner liked, replied to, reposted, or quoted. A reply's `referenced_posts` id of type `replied_to`, its `conversation_id`, a quote's `quoted` id, and a repost's `retweeted` id all count.
+Those files, plus replies already in `posts_*.json`, are how Catch up hides a post the owner liked, replied to, reposted, or quoted. A reply's `referenced_tweets` (or `referenced_posts`) id of type `replied_to`, its `conversation_id`, a quote's `quoted` id, and a repost's `retweeted` id all count. The same owner replies tell Replies which mentions are already answered: answered means the owner's reply's `replied_to` id is that mention's id. A page that drops replies, or drops `referenced_posts`, leaves an answered reply marked as not replied.
 
 ### 6. Latest post for the catch-up list
 
-Read the good neighbours file first (see Good neighbours). If it lists people, fetch a latest page for each of them, at most 20, and do not also fetch the ranked ten. If the file is missing or the list is empty, pick at most 10 people with the highest quiet score in config (do not tell the owner the numbers). For each person, one call:
+Read the good neighbours file first (see Good neighbours). If it lists people, fetch a latest page for each of them, at most 20, and do not also fetch the ranked ten. If the file is missing or the list is empty, pick at most 10 people with the highest quiet score in config (replies and quotes use `reply_weight`, likes use `like_weight`; do not tell the owner the numbers). For each person:
 
-`get_users_posts` — `id` their user id, `max_results` 10, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts`, `expansions=author_id`, `user.fields=username,name,profile_image_url`.
+`get_users_posts`
 
-Save the whole page as `latest_<userid>`. Catch up walks that page newest first and keeps the first original post the owner has not already liked, replied to, reposted, or quoted. A quote of their own counts. A reply (`in_reply_to_user_id` or `referenced_posts` type `replied_to`) and a plain repost (`retweeted`, or text starting `RT @`) do not. If every original post in the page is already engaged, the script skips that person. If nobody is left, the section is one line: “You're all caught up with your good neighbours 🎉”. With an empty list it fills the ten from the next person who still has an unengaged original post. With a list it does not fill from anyone else. Skip a file saved earlier today.
+- `id`: their user id
+- `max_results`: `100` (the tool maximum). `10` is not enough once posts the owner already liked, reposted, or replied to are skipped
+- `exclude`: `replies` and `retweets`. Pass the two values. `exclude=replies,retweets` is the same pair
+- `post.fields`: `created_at,text,conversation_id`
+- `expansions`: `author_id,in_reply_to_user_id,referenced_posts`
+- `user.fields`: `username,name,profile_image_url`
+
+Do not put `author_id`, `in_reply_to_user_id`, or `referenced_tweets` in `post.fields`. On this API those are expansions (`referenced_posts`, not `referenced_tweets`). An unknown post field can fail the call, and the saved page then has no real `created_at`.
+
+Save the whole page as `latest_<userid>`. Copy each post's `created_at` from the tool result. Do not replace it with the fetch time, the report time, or `--now`. If every original post on that page is one the owner already liked, reposted, or replied to, and `meta.next_token` is present, fetch one more page and save it as `latest_<userid>_p2`. Then stop. The script merges those pages.
+
+The script walks the saved posts newest first and keeps one post per neighbour: the newest of their own writing that the owner has not liked, reposted, or replied to. A quote by the owner counts as engaged. A quote post of their own counts as their writing (it is their text). A quote that is also a reply does not. A reply does not (`in_reply_to_user_id`, a `replied_to` reference on `referenced_tweets` or `referenced_posts`, or a `conversation_id` that is not the post's own id). A plain repost does not (`retweeted`, or text starting `RT @`). If that page has no such post, the script skips that person. If nobody is left, the section is one line: “You're all caught up with your good neighbours 🎉”. With an empty list it fills the ten from the next person who still has an unengaged original post. With a list it does not fill from anyone else.
+
+The age on each line is that post's `created_at` against the actual current UTC time when the script runs. It is not `--now`, the report window, or the time the file was saved. Skip a `latest_<userid>` file saved earlier today. A file from a previous day is stale and must be fetched again. Do not skip section 5: those likes, reposts, and replies are what hides a post the owner already engaged with.
 
 ### 7. Followers and following
 
@@ -155,7 +185,7 @@ Do not call `get_users_me_followers` or `get_users_me_following`. Echo's daily s
 python3 x_neighbours.py --now <T> --snapshot-dir /workspace/content/followers --good-neighbours <path> --state <state path>
 ```
 
-`<path>` is `good_neighbours.json` in the store. `<state path>` is `state.json` beside it. The script reads `config.json` and `data/`. For each window it writes `report_<window>.md` (sections 1–3) and `report_<window>_thanks.md` (section 4), plus `x_neighbours_<window>.png`, the house-framed picture, `report_<window>_more.json`, and `open_items.csv`. `open_items.csv` is the hand-off file for one-tap actions (`follow_back`, `first_reply`, `catch_up`, `thank_you`). Status is `open` unless a previous file already marked that kind+handle `done` or `dropped`. The report card PNG is off unless you pass `--report-card`. Stdout is JSON with totals, `catch_up`, `picture`, `thank_you`, `open_items`, and `messages`. `thank_you.text` is the thank-you sentence. It names no one. `thank_you.intent` is the post link. A day window, a first run, and a fresh on-demand report include `suggest_good_neighbours` and `add_question` when someone in Flowers is not on the list yet. A week window does not. `--first-run` uses `first_run_days` (default 2). A missing good neighbours file is an empty list. `--no-picture` skips the image; the default is to draw it every time. `--since <ISO>` is a report that starts at that time.
+`<path>` is `good_neighbours.json` in the store. `<state path>` is `state.json` beside it. The script reads `config.json` and `data/`. For each window it writes `report_<window>.md` (sections 1–3) and `report_<window>_thanks.md` (section 4), plus `x_neighbours_<window>.png`, the house-framed picture, `report_<window>_more.json`, and `open_items.csv`. `open_items.csv` is the hand-off file for one-tap actions (`follow_back`, `first_reply`, `catch_up`, `thank_you`). Status is `open` unless a previous file already marked that kind+handle `done` or `dropped`. Each neighbour on that picture is labelled with their display name and, on the line below, their @username. The name is the X user `name` field. Keep `name` in every `user.fields` list in this runbook. When an account has no name, the label is the @username alone. The report card PNG is off unless you pass `--report-card`. Stdout is JSON with totals, `catch_up`, `picture`, `thank_you`, `open_items`, and `messages`. `thank_you.text` is the thank-you sentence. It names no one. `thank_you.intent` is the post link. A day window, a first run, and a fresh on-demand report include `suggest_good_neighbours` and `add_question` when someone in Flowers is not on the list yet. A week window does not. `--first-run` uses `first_run_days` (default 2). A missing good neighbours file is an empty list. `--no-picture` skips the image; the default is to draw it every time. `--since <ISO>` is a report that starts at that time.
 
 A custom period is `--days 14` (writes `report_custom`). Likes only, replies only, per post, and per day are `--report likes`, `--report replies`, `--per-post`, and `--per-day`. They re-read `data/` and do not need more X calls. Weight flags exist. Keep those values in config only, and never print them.
 
@@ -175,8 +205,8 @@ The first two lines of `report_<window>.md` are the header. Do not add a date ra
 Then the sections, written for a phone. Do not turn them back into a wide table. The headings are short:
 
 1. **💐 Flowers** — one person per block. The name is the only link. Counts sit on the next line (`2 replies · 4 likes · 1 repost`). Replies means replies plus quote posts. Biggest supporters first. No Total column and no second @handle.
-2. **🏡 What's new** — the post preview is the link. No @handle and no separate “Read post” link. Same people as Catch up: good neighbours when the list has anyone, otherwise the top people from the period.
-3. **👋 Replies** — unanswered first, one block each, no nested bullets. The preview text is a link to that reply or quote (`url`), so the owner can open it and answer. Waiting is one row per person by default (`waiting_rule.per_person`), and only if their latest message in that thread has no reply from the owner (`latest_unreplied`). A follow-up in a thread the owner already answered is not waiting. Replies you already answered are left out. The report says how many, and they can ask to see them.
+2. **🏡 What's new** — the post preview is the link. No @handle and no separate “Read post” link. Same people as Catch up: good neighbours when the list has anyone, otherwise the top people from the period. One post per person: their newest original (a quote of their own counts; a reply or a plain repost does not) that the owner has not liked, reposted, or replied to. The age is that post's `created_at` against the actual current UTC time, not `--now`.
+3. **👋 Replies** — top-level replies and quote posts only, unanswered first, newest first inside the unanswered group and inside the answered group, one block each, no nested bullets. The preview text is a link to that reply or quote (`url`), so the owner can open it and answer. A reply counts only when its direct `replied_to` parent is one of the owner's original posts. A later reply in the thread does not count, and the owner's own posts are never listed. Waiting is one row per person by default (`waiting_rule.per_person`), and only if their latest message in that thread has no reply from the owner (`latest_unreplied`). A follow-up that is still first-level, in a thread the owner already answered, is not waiting. Replies the owner already answered directly are left out. The report says how many, and they can ask to see them. Shown answered text says `Replied`, never `Not replied yet`. The “ago” time is that post's `created_at` against the actual current UTC time, not the report window end.
 
 A Markdown hard line break (two spaces at the end of the line) separates the period from the emoji counts, the counts from the legend when there is one, a name from the counts under it, and a name from the post preview. Keep those breaks when you send the text. A single newline is not enough; chat will join the lines.
 
@@ -204,7 +234,7 @@ Weekly-only means there is no daily routine. One Monday job covers the last 7 da
 
 ### Every day
 
-1. `git pull --ff-only`. Leave `config.json` and `data/` uncommitted.
+1. Follow “Upgrading” (`git pull --ff-only` is part of it). Leave `config.json` and `data/` uncommitted.
 2. Do not call `get_users_me_followers` or `get_users_me_following`. Pass `--snapshot-dir /workspace/content/followers`.
 3. Pick `T`. `START` is `T` minus 24 hours.
 4. Fetch posts and mentions from `START`. Save them as `posts_day_1`, `posts_day_2`, … and `mentions_day_1`, ….
@@ -286,7 +316,7 @@ To remove someone, run `remove`. To show the list, run `list` and send the names
 
 Adding someone does not follow them. This run stays read-only on X.
 
-When the list is non-empty, Catch up with your good neighbours shows only those people, each one's latest original post the owner has not already liked, replied to, reposted, or quoted, and skips anyone with no such post. They are not inserted into the other sections just because they are on the list. When the list is empty, Catch up stays the top 10 from the period, with the same skip, and the report adds: “Add people to your good neighbours list to keep up with them here.” If everyone left is already engaged, the section is “You're all caught up with your good neighbours 🎉”.
+When the list is non-empty, Catch up with your good neighbours shows only those people, each one's latest original post the owner has not already liked, replied to, reposted, or quoted, and skips anyone with no such post. A quote of their own counts as that original post; a reply or a plain repost does not. The age is the post's `created_at` against the current UTC time. They are not inserted into the other sections just because they are on the list. When the list is empty, Catch up stays the top 10 from the period, with the same skip, and the report adds: “Add people to your good neighbours list to keep up with them here.” If nothing is left to show, the section is “You're all caught up with your good neighbours 🎉”.
 
 After a daily report, a first run, and a fresh on-demand report, the script lists up to five people from Flowers who are not on the list yet, in Flowers order. They are in `suggest_good_neighbours`. If nobody is left, `add_question` is absent and you skip the card. Send one multi-select card, short label **⭐ Add**. Each option label is `Display Name (@username)` from the `label` field. Do not rewrite it to the handle alone. Add a free-text option (“Or name anyone else”). A weekly report does not ask. The first-run closing line mentions the list once, besides that card.
 
@@ -319,7 +349,7 @@ Offer this for any concern the owner mentions: a complaint, a wish, a nit, or a 
 1. Answer the point in a sentence or two.
 2. Ask once, as a yes/no card: “Want to report this so it gets fixed?”
 3. If they say no, drop it. Do not ask again about that same point in this conversation.
-4. If they say yes, draft a short issue and show it before any link. Title is one line. Body has what they expected, what happened, the report type (daily, weekly, first, fresh, or other), and the version from `git rev-parse --short HEAD`.
+4. If they say yes, draft a short issue and show it before any link. Title is one line. Body has what they expected, what happened, the report type (daily, weekly, first, fresh, or other), the version from `python3 version.py` (the line in `VERSION`), and the short git SHA from `git rev-parse --short HEAD`.
 5. Leave out every personal detail: handles, names, post text, the good neighbours list, avatars, ids, and tokens. Describe the behaviour, not the people.
 6. When they accept the draft, build the link. Do not post it.
 
@@ -333,7 +363,7 @@ A quote of their own post was left out of Catch up.
 
 Report
 - Type: daily
-- Version: abc1234
+- Version: (paste `python3 version.py`) (abc1234)
 EOF
 )"
 ```

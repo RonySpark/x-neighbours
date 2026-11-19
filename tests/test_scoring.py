@@ -37,6 +37,10 @@ def sample_data():
          "text": "mutual on owner reply", "in_reply_to_user_id": "me",
          "referenced_tweets": [{"type": "replied_to", "id": "9"}],
          "conversation_id": "8"},
+        {"id": "6", "author_id": "u1", "created_at": "2026-11-04T10:20:00Z",
+         "text": "second first-level reply", "in_reply_to_user_id": "me",
+         "referenced_tweets": [{"type": "replied_to", "id": "1"}],
+         "conversation_id": "1"},
     ], "includes": {"users": [
         {"id": "u1", "username": "ada", "name": "Ada",
          "connection_status": ["following", "followed_by"]},
@@ -82,7 +86,8 @@ class ScoringTest(unittest.TestCase):
 
     def test_defaults_match_old_like_and_reply_weights(self):
         ranked = self.ranked()
-        # u1: 1 like * 1 + 2 replies * 3 = 7
+        # u1: 1 like * 1 + 2 first-level replies * 3 = 7.
+        # The reply under the owner's own reply does not count.
         # u2: 1 like * 1 + 1 repost * 1 + 1 reply * 3 + 1 quote * 3 = 8
         self.assertEqual(ranked["u1"], 7)
         self.assertEqual(ranked["u2"], 8)

@@ -209,5 +209,46 @@ class TopLevelRepliesTest(unittest.TestCase):
         self.assertIn("1009", self.data.owner_reply_ids)
 
 
+class FirstLevelUnansweredTest(unittest.TestCase):
+    """Unanswered rows are replies to the owner's own post, not replies to replies."""
+
+    def test_direct_reply_counts_reply_to_reply_does_not(self):
+        folder = tempfile.mkdtemp(prefix="xn-first-level-")
+        dump(folder, "posts_1.json", {"data": [
+            {
+                "id": "10", "author_id": ME, "created_at": "2026-11-04T09:00:00Z",
+                "text": "hello neighbours", "conversation_id": "10",
+            },
+            {
+                "id": "12", "author_id": ME, "created_at": "2026-11-04T11:00:00Z",
+                "text": "thanks for writing", "conversation_id": "10",
+                "referenced_tweets": [{"type": "replied_to", "id": "99"}],
+            },
+        ]})
+        dump(folder, "mentions_1.json", {"data": [
+            mention("11", "901", "2026-11-04T10:00:00Z",
+                    "a first-level reply", parent="10"),
+            mention("13", "902", "2026-11-04T12:00:00Z",
+                    "a reply to a reply", parent="12"),
+            mention("14", "903", "2026-11-04T13:00:00Z",
+                    "a third-level reply", parent="13"),
+        ], "includes": {"users": [
+            user("901", "ada_brook", "Ada Brook"),
+            user("902", "ben_marsh", "Ben Marsh"),
+            user("903", "cleo_dawn", "Cleo Dawn"),
+        ]}})
+        data = xn.Data(folder, ME)
+        now = xn.ts("2026-11-04T18:00:00Z")
+        activity = xn.build_activity(
+            data, xn.ts("2026-11-04T00:00:00Z"), now, 10, 1, 3, "both", now)
+        unanswered, answered = xn.greeting_rows(activity["threads"])
+        waiting = [row["text"] for row in unanswered]
+        listed = waiting + [row["text"] for row in answered]
+        self.assertEqual(waiting, ["a first-level reply"])
+        self.assertEqual(answered, [])
+        self.assertNotIn("a reply to a reply", listed)
+        self.assertNotIn("a third-level reply", listed)
+
+
 if __name__ == "__main__":
     unittest.main()

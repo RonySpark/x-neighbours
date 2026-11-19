@@ -1663,8 +1663,15 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         for uid in data.reposts.get(pid, []):
             if not hidden_user(data, uid):
                 reposts_c[uid] += 1
+    mutual_replies = Counter()
     for item in items:
         (quote_c if item["kind"] == "quote" else reply_c)[item["author_id"]] += 1
+        if item["kind"] != "reply":
+            continue
+        on_id = item.get("on_id")
+        on_post = data.posts.get(on_id) if on_id else None
+        if on_post and is_original_post(on_post) and data.relation(item["author_id"]) == "mutual":
+            mutual_replies[item["author_id"]] += 1
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
@@ -1680,8 +1687,8 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
                  + replies * reply_weight
                  + quotes * quote_weight)
         relation = data.relation(uid)
-        if relation == "mutual":
-            total += mutual_bonus
+        if relation == "mutual" and which != "likes":
+            total += mutual_replies[uid] * mutual_bonus
         elif relation == "follows-you":
             total += new_follower_credit
         return total

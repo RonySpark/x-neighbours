@@ -117,7 +117,7 @@ The clone and `config.json` stay where they are. The good neighbours list and th
 | `user_id` | Your numeric X user id, stored as a string |
 | `like_weight`, `reply_weight` | Quiet points. A reply uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
 | `repost_weight`, `quote_weight` | Optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight` |
-| `mutual_bonus` | Extra quiet points when you follow each other. Default 2. Not printed. `mutual_reply_bonus` still works as this key, once per person, and prints a rename warning on stderr |
+| `mutual_bonus` | Extra quiet points per reply from a mutual on your original posts. Default 2. A reply on your reply adds none. Not printed. `mutual_reply_bonus` still works as this key and prints a rename warning on stderr |
 | `new_follower_credit` | Extra quiet points when they follow you and you do not follow them. Default 1. Not printed. `new_follower_bonus` still works as this key and prints a rename warning on stderr |
 | `waiting_rule` | Replies waiting count. `per_person` (default true) counts each person once. `latest_unreplied` (default true) counts them only if their latest message in that thread has no reply from the owner |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |

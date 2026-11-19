@@ -845,6 +845,8 @@ def resolve_weights(cfg):
         "mutual_bonus": aliased_weight(cfg, "mutual_bonus", "mutual_reply_bonus", 0),
         "new_follower_credit": aliased_weight(
             cfg, "new_follower_credit", "new_follower_bonus", 0),
+        "thread_reply_factor": optional_weight(cfg.get("thread_reply_factor"), 0.5),
+        "author_engaged_bonus": optional_weight(cfg.get("author_engaged_bonus"), 1.0),
     }
 
 
@@ -1597,13 +1599,185 @@ def waiting_rule_from(value):
     return rule
 
 
+THREAD_REPLY_CAP = 3
+
+
+def thread_reply_credit(data, since, until, reply_weight, thread_reply_factor,
+                        author_engaged_bonus):
+    posts = {}
+
+    def parent_of(post):
+        replied = referenced_ids(post, "replied_to")
+        if replied:
+            return replied[0]
+        for key in ("in_reply_to_tweet_id", "in_reply_to_status_id", "in_reply_to_post_id"):
+            value = post.get(key)
+            if value:
+                return str(value)
+        return None
+
+    def add(raw):
+        if not isinstance(raw, dict) or raw.get("id") is None:
+            return
+        post = set_referenced(dict(raw))
+        post["id"] = str(post["id"])
+        if post.get("author_id") is not None:
+            post["author_id"] = str(post["author_id"])
+        if post.get("conversation_id") is not None:
+            post["conversation_id"] = str(post["conversation_id"])
+        pid = post["id"]
+        current = posts.get(pid)
+        if current is None or (parent_of(current) is None and parent_of(post) is not None):
+            posts[pid] = post
+
+    for source in data.posts.values():
+        add(source)
+    for source in data.mentions:
+        add(source)
+    for bucket in data.quotes.values():
+        for source in bucket:
+            add(source)
+    for source in data._my_posts:
+        add(source)
+    for source in data._expanded_posts:
+        add(source)
+
+    roots = {str(pid) for pid in data.owner_original_ids}
+    me = str(data.me)
+    owned = {str(pid) for pid in data.posts}
+    for source in data._my_posts:
+        if isinstance(source, dict) and source.get("id") is not None:
+            owned.add(str(source["id"]))
+
+    def walk(post):
+        hops = 0
+        current = str(post["id"])
+        seen = set()
+        while current not in seen:
+            seen.add(current)
+            node = posts.get(current)
+            if node is None:
+                return None
+            parent = parent_of(node)
+            if not parent:
+                return None
+            hops += 1
+            if parent in roots:
+                return hops, parent
+            if parent not in posts:
+                return None
+            current = parent
+        return None
+
+    def place(post):
+        conv = post.get("conversation_id")
+        if conv is not None and conv not in roots:
+            return None
+        parent = parent_of(post)
+        if not parent:
+            return None
+        if parent in roots:
+            return 1, conv or parent
+        if parent not in posts:
+            if conv is None:
+                return None
+            return 2, conv
+        found = walk(post)
+        if not found:
+            return None
+        depth, walked = found
+        return depth, conv or walked
+
+    def owner_authored(post):
+        author = post.get("author_id")
+        if author is not None:
+            return str(author) == me
+        return str(post.get("id")) in owned
+
+    def owner_reply_roots(post):
+        if not owner_authored(post):
+            return []
+        pid = str(post["id"])
+        found = []
+        conv = post.get("conversation_id")
+        if conv is not None and conv in roots and pid != conv:
+            found.append(conv)
+        parent = parent_of(post)
+        walked = None
+        if parent in roots:
+            walked = parent
+        elif parent and parent in posts:
+            chain = walk(post)
+            if chain:
+                walked = chain[1]
+        if walked and pid != walked and walked not in found:
+            found.append(walked)
+        return found
+
+    scored = []
+    for post in posts.values():
+        if parent_of(post) is None:
+            continue
+        author = str(post.get("author_id") or "")
+        if hidden_user(data, author):
+            continue
+        if not data._in_window(post.get("created_at"), since, until):
+            continue
+        placed = place(post)
+        conv = post.get("conversation_id")
+        if conv is not None:
+            if conv not in roots:
+                continue
+            root = conv
+        elif placed:
+            root = placed[1]
+        else:
+            continue
+        depth = placed[0] if placed else None
+        scored.append((author, root, depth, ts(post["created_at"]), post["id"]))
+
+    buckets = defaultdict(list)
+    for author, root, depth, when, pid in scored:
+        if depth in (2, 3):
+            buckets[(author, root)].append((when, pid))
+
+    credit = defaultdict(float)
+    factor_points = thread_reply_factor * reply_weight
+    if factor_points:
+        for (author, _root), rows in buckets.items():
+            rows.sort()
+            credit[author] += factor_points * len(rows[:THREAD_REPLY_CAP])
+
+    bonus_points = author_engaged_bonus * reply_weight
+    if bonus_points:
+        owner_times = defaultdict(list)
+        for post in posts.values():
+            created = post.get("created_at")
+            if not created:
+                continue
+            when = ts(created)
+            for root in owner_reply_roots(post):
+                owner_times[root].append(when)
+        granted = set()
+        for author, root, _depth, when, _pid in scored:
+            if (author, root) in granted:
+                continue
+            if any(when > owner_when for owner_when in owner_times.get(root, ())):
+                granted.add((author, root))
+                credit[author] += bonus_points
+    return {uid: value for uid, value in credit.items() if value}
+
+
 def build_activity(data, since, until, top, like_weight, reply_weight, mode, now,
                    good_neighbours=None, mutual_bonus=0, new_follower_credit=0,
-                   repost_weight=None, quote_weight=None):
+                   repost_weight=None, quote_weight=None,
+                   thread_reply_factor=0.5, author_engaged_bonus=1.0):
     if repost_weight is None:
         repost_weight = like_weight
     if quote_weight is None:
         quote_weight = reply_weight
+    thread_reply_factor = optional_weight(thread_reply_factor, 0.5)
+    author_engaged_bonus = optional_weight(author_engaged_bonus, 1.0)
     items = []
     seen = set()
 
@@ -1665,6 +1839,8 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
                 reposts_c[uid] += 1
     for item in items:
         (quote_c if item["kind"] == "quote" else reply_c)[item["author_id"]] += 1
+    credit = thread_reply_credit(
+        data, since, until, reply_weight, thread_reply_factor, author_engaged_bonus)
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
@@ -1679,6 +1855,8 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
                  + reposts * repost_weight
                  + replies * reply_weight
                  + quotes * quote_weight)
+        if which != "likes":
+            total += credit.get(uid, 0)
         relation = data.relation(uid)
         if relation == "mutual":
             total += mutual_bonus
@@ -1703,6 +1881,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         }
 
     people = set(likes_c) | set(reposts_c) | set(reply_c) | set(quote_c)
+    people.update(credit)
     ranked = Counter()
     order = sorted(people, key=lambda uid: (-points(uid, "both"), -reply_c[uid] - quote_c[uid], uid))
     for uid in order:
@@ -2729,6 +2908,8 @@ def main():
     quote_weight = weights["quote_weight"]
     mutual_bonus = weights["mutual_bonus"]
     new_follower_credit = weights["new_follower_credit"]
+    thread_reply_factor = weights["thread_reply_factor"]
+    author_engaged_bonus = weights["author_engaged_bonus"]
     waiting_rule = waiting_rule_from(cfg.get("waiting_rule"))
     me_id = str(cfg["user_id"])
     now = ts(args.now) if args.now else datetime.now(timezone.utc)
@@ -2775,7 +2956,9 @@ def main():
             data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
             good_neighbours=neighbours,
             mutual_bonus=mutual_bonus, new_follower_credit=new_follower_credit,
-            repost_weight=repost_weight, quote_weight=quote_weight)
+            repost_weight=repost_weight, quote_weight=quote_weight,
+            thread_reply_factor=thread_reply_factor,
+            author_engaged_bonus=author_engaged_bonus)
         md_path = os.path.join(args.out, f"report_{key}.md")
         png_path = os.path.join(args.out, f"report_{key}.png")
         text, intent = thank_you_post(now, zone)

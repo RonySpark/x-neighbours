@@ -191,14 +191,12 @@ def clip_text(text, n=72):
 
 
 def latest_export_date(overview, content):
-    dates = []
-    if overview is not None and not overview.empty:
-        dates.append(max(overview["date"]))
+    """Week end is the posts export last day. Overview only if there are no posts."""
     if content is not None and not content.empty:
-        dates.append(max(content["date"]))
-    if not dates:
-        raise SystemExit("exports have no dates")
-    return max(dates)
+        return max(content["date"])
+    if overview is not None and not overview.empty:
+        return max(overview["date"])
+    raise SystemExit("exports have no dates")
 
 
 def week_windows(end):

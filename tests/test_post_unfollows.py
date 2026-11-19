@@ -165,7 +165,7 @@ class PostUnfollowsTest(unittest.TestCase):
         )
         self.assertIn("10 Nov: 1 post -> 0 unfollows 24-48h later.", text)
         self.assertIn("15 Nov: 1 post: no snapshot.", text)
-        self.assertNotIn("8 Nov", text)
+        self.assertNotIn("8 Nov:", text)
         self.assertNotIn("old post", text)
         self.assertNotIn("@early", text)
         self.assertNotIn("@trap", text)

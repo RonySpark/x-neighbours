@@ -666,6 +666,30 @@ class TiedPickTest(unittest.TestCase):
         self.assertEqual(picks[0]["do_more"], "15")
 
 
+class WeekEndFromContentTest(unittest.TestCase):
+    def test_overview_ending_later_keeps_best_post_in_this_week(self):
+        """Synthetic only. Overview ending a day later must not drop this week's best post."""
+        content = pd.DataFrame([
+            {
+                "date": date(2026, 11, 10), "post_id": "10",
+                "posted_at": datetime(2026, 11, 10, tzinfo=timezone.utc),
+                "text": "best of the week", "impressions": 5000, "engagements": 50,
+                "engagement_rate": 0.01, "new_follows": 0,
+            },
+            {
+                "date": date(2026, 11, 16), "post_id": "20",
+                "posted_at": datetime(2026, 11, 16, tzinfo=timezone.utc),
+                "text": "later quieter", "impressions": 50, "engagements": 1,
+                "engagement_rate": 0.02, "new_follows": 0,
+            },
+        ])
+        overview = pd.DataFrame({"date": [date(2026, 11, d) for d in range(10, 18)]})
+        card = ca.scorecard(overview, content)
+        self.assertEqual(card["this_week"], ["2026-11-10", "2026-11-16"])
+        self.assertEqual(card["posts"]["impressions"]["top"][0]["text"], "best of the week")
+        self.assertEqual(ca.latest_export_date(overview, pd.DataFrame()), date(2026, 11, 17))
+
+
 class BlankPostIdTest(unittest.TestCase):
 
     def test_skips_blank_and_non_numeric_ids_without_mangling_digits(self):

@@ -147,10 +147,47 @@ class ScoringTest(unittest.TestCase):
 
     def test_mutual_bonus_once_even_with_two_replies(self):
         ranked = self.ranked(mutual_bonus=10)
-        # u1: old 7 + 10 once (two replies do not double it)
+        # u1: 7 + 10. The second reply is on the owner's reply, so it adds no bonus.
         self.assertEqual(ranked["u1"], 17)
         # u2 is follows-you, not mutual
         self.assertEqual(ranked["u2"], 8)
+
+    def test_mutual_bonus_for_each_reply_on_an_original(self):
+        folder = tempfile.mkdtemp(prefix="xn-mutual-replies-")
+        dump(folder, "posts_1.json", {"data": [
+            {"id": "1", "author_id": "me", "created_at": "2026-11-04T09:00:00Z",
+             "text": "first original"},
+            {"id": "2", "author_id": "me", "created_at": "2026-11-04T09:10:00Z",
+             "text": "second original"},
+            {"id": "9", "author_id": "me", "created_at": "2026-11-04T09:30:00Z",
+             "text": "a reply of mine", "in_reply_to_user_id": "u3",
+             "referenced_tweets": [{"type": "replied_to", "id": "8"}]},
+        ]})
+        dump(folder, "mentions_1.json", {"data": [
+            {"id": "11", "author_id": "u1", "created_at": "2026-11-04T10:00:00Z",
+             "text": "reply one", "in_reply_to_user_id": "me",
+             "referenced_tweets": [{"type": "replied_to", "id": "1"}],
+             "conversation_id": "1"},
+            {"id": "12", "author_id": "u1", "created_at": "2026-11-04T10:05:00Z",
+             "text": "reply two", "in_reply_to_user_id": "me",
+             "referenced_tweets": [{"type": "replied_to", "id": "2"}],
+             "conversation_id": "2"},
+            {"id": "13", "author_id": "u1", "created_at": "2026-11-04T10:10:00Z",
+             "text": "reply on the owner reply", "in_reply_to_user_id": "me",
+             "referenced_tweets": [{"type": "replied_to", "id": "9"}],
+             "conversation_id": "8"},
+        ], "includes": {"users": [{
+            "id": "u1", "username": "alice", "name": "Alice",
+            "connection_status": ["following", "followed_by"],
+        }]}})
+        dump(folder, "followers_1.json", {"data": [{"id": "u1", "username": "alice"}]})
+        dump(folder, "following_1.json", {"data": [{"id": "u1", "username": "alice"}]})
+        data = xn.Data(folder, "me")
+        activity = xn.build_activity(
+            data, self.since, self.now, 10, 1, 3, "both", self.now, mutual_bonus=10)
+        # 3 replies * 3, plus 10 for each of the two replies on original posts.
+        # The reply on the owner's reply adds none.
+        self.assertEqual(activity["ranked"]["u1"], 29)
 
     def test_new_follower_credit_once_for_follows_you(self):
         ranked = self.ranked(new_follower_credit=5)
@@ -159,8 +196,8 @@ class ScoringTest(unittest.TestCase):
 
     def test_mutual_new_follower_credited_once(self):
         ranked = self.ranked(mutual_bonus=2, new_follower_credit=1)
-        # u1 is a mutual who also follows the owner. Activity 7 + mutual 2.
-        # Not 7+2+1 (new-follower credit) and not 7+2+2 (once per reply).
+        # u1 is a mutual. Activity 7 plus 2 for the one reply on an original post.
+        # The reply on the owner's reply adds no second bonus, and no new-follower credit.
         self.assertEqual(ranked["u1"], 9)
         # u2 follows the owner only. Activity 8 + credit 1, not 8+1+1.
         self.assertEqual(ranked["u2"], 9)

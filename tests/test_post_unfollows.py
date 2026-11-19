@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import content_analytics as ca
 
@@ -21,6 +21,7 @@ OVERVIEW_HEADER = (
     "Unfollows,Replies,Reposts,Profile visits,Create Post,Video views,Media views"
 )
 EXPORT_AT = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+GONE = ("a", "b", "c", "d", "e", "f", "g")
 
 
 def snowflake_id(when):
@@ -34,38 +35,32 @@ def write_json(path, payload):
         json.dump(payload, fh)
 
 
-def follower_list(*ids):
-    return [
-        {"id": uid, "username": f"user_{uid}", "name": f"User {uid}"}
-        for uid in ids
-    ]
+def users(*names):
+    return [{"id": name, "username": name, "name": name} for name in names]
 
 
 def write_snapshot_dir(folder):
-    """Three-day windows around 10 Nov and 12 Nov. 15 Nov has no +1/+2 files."""
-    write_json(os.path.join(folder, "2026-11-10.json"), follower_list("8001", "8002"))
-    write_json(os.path.join(folder, "2026-11-11.json"), follower_list("8001", "8002"))
-    write_json(os.path.join(folder, "2026-11-12.json"), follower_list("8001", "8002", "8003", "8004"))
-    write_json(os.path.join(folder, "2026-11-13.json"), follower_list("8001", "8002", "8003"))
-    write_json(os.path.join(folder, "2026-11-14.json"), follower_list("8001", "8003"))
-    write_json(os.path.join(folder, "2026-11-15.json"), follower_list("8001", "8003"))
+    write_json(os.path.join(folder, "2026-11-10.json"), users("stay1", "stay2"))
+    write_json(os.path.join(folder, "2026-11-11.json"), users("stay1", "stay2"))
+    write_json(
+        os.path.join(folder, "2026-11-12.json"),
+        users("stay1", "stay2", "early", *GONE),
+    )
+    write_json(os.path.join(folder, "2026-11-13.json"), users("stay1", "stay2", *GONE))
+    write_json(os.path.join(folder, "2026-11-14.json"), users("stay1", "stay2"))
+    write_json(os.path.join(folder, "2026-11-15.json"), users("stay1", "stay2"))
     with open(os.path.join(folder, "counts.csv"), "w", encoding="utf-8") as fh:
         fh.write("date,followers_total,followers_verified,following_total,mutuals\n")
-        fh.write("2026-11-10,2,0,0,0\n")
-        fh.write("2026-11-12,4,0,0,0\n")
-        fh.write("2026-11-15,2,0,0,0\n")
-    write_json(
-        os.path.join(folder, "pages", "2026-11-13.json"),
-        follower_list("9999"),
-    )
+        fh.write("2026-11-12,10,0,0,0\n")
+    write_json(os.path.join(folder, "pages", "2026-11-13.json"), users("trap"))
     return folder
 
 
 def content_row(post_id, when, text):
     day = when.astimezone(timezone.utc).strftime("%a, %b %-d, %Y")
-    link = f"https://x.com/creator/status/{post_id}"
     return (
-        f'{post_id},"{day}",{text},{link},100,1,2,0,0,0,0,0,1,2,0,0,0'
+        f'{post_id},"{day}",{text},https://x.com/creator/status/{post_id},'
+        "100,1,2,0,0,0,0,0,1,2,0,0,0"
     )
 
 
@@ -89,15 +84,23 @@ def write_exports(folder, posts, overview_days=None):
     return folder
 
 
+def utc(month, day, hour=12):
+    return datetime(2026, month, day, hour, tzinfo=timezone.utc)
+
+
 def fixture_posts():
-    stable = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
-    spicy = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
-    fresh = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
     return [
-        (snowflake_id(stable), stable, "stable post"),
-        (snowflake_id(spicy), spicy, "spicy post"),
-        (snowflake_id(fresh), fresh, "fresh post"),
+        (snowflake_id(utc(11, 8)), utc(11, 8), "old post"),
+        (snowflake_id(utc(11, 10)), utc(11, 10), "stable post"),
+        (snowflake_id(utc(11, 12, 12)), utc(11, 12, 12), "spicy post"),
+        (snowflake_id(utc(11, 12, 13)), utc(11, 12, 13), "@other agreed"),
+        (snowflake_id(utc(11, 12, 14)), utc(11, 12, 14), "@pal yes"),
+        (snowflake_id(utc(11, 15)), utc(11, 15), "fresh post"),
     ]
+
+
+def by_date(report):
+    return {row["date"]: row for row in report["days"]}
 
 
 class PostUnfollowsTest(unittest.TestCase):
@@ -106,77 +109,72 @@ class PostUnfollowsTest(unittest.TestCase):
         cls.snap = write_snapshot_dir(tempfile.mkdtemp(prefix="xn-unf-snap-"))
         cls.exports = write_exports(
             tempfile.mkdtemp(prefix="xn-unf-exp-"), fixture_posts(),
-            overview_days=[
-                datetime(2026, 11, d, 12, tzinfo=timezone.utc) for d in range(10, 17)
-            ],
+            overview_days=[utc(11, d) for d in range(10, 17)],
         )
-        cls.posts = ca.load_content(cls.exports)
-        cls.ids = [pid for pid, _when, _text in fixture_posts()]
+        cls.posts = ca.in_days(
+            ca.load_content(cls.exports),
+            utc(11, 10).date(), utc(11, 16).date(),
+        )
 
-    def test_gone_in_24_48h_not_the_earlier_drop(self):
+    def test_one_line_per_day_usernames_not_ids(self):
         report = ca.post_unfollows(self.posts, self.snap)
-        by_id = {row["post_id"]: row for row in report["posts"]}
-        spicy = by_id[self.ids[1]]
+        self.assertEqual(
+            [row["date"] for row in report["days"]],
+            ["2026-11-10", "2026-11-12", "2026-11-15"],
+        )
+        spicy = by_date(report)["2026-11-12"]
         self.assertEqual(spicy["status"], "ok")
-        self.assertEqual(spicy["baseline_date"], "2026-11-12")
-        self.assertEqual(spicy["plus1_date"], "2026-11-13")
-        self.assertEqual(spicy["plus2_date"], "2026-11-14")
-        self.assertEqual(spicy["gone_ids"], ["8002"])
-        self.assertEqual(spicy["gone_count"], 1)
-        self.assertNotIn("8004", spicy["gone_ids"])
+        self.assertEqual(spicy["originals"], 1)
+        self.assertEqual(spicy["replies"], 2)
+        self.assertEqual(spicy["gone"], list(GONE))
+        self.assertEqual(spicy["gone_count"], 7)
+        self.assertNotIn("early", spicy["gone"])
+        stable = by_date(report)["2026-11-10"]
+        self.assertEqual(stable["gone_count"], 0)
+        self.assertEqual(stable["originals"], 1)
+        self.assertEqual(stable["replies"], 0)
 
     def test_missing_snapshot_is_named_not_guessed(self):
-        report = ca.post_unfollows(self.posts, self.snap)
-        by_id = {row["post_id"]: row for row in report["posts"]}
-        fresh = by_id[self.ids[2]]
+        fresh = by_date(ca.post_unfollows(self.posts, self.snap))["2026-11-15"]
         self.assertEqual(fresh["status"], "no_snapshot")
-        self.assertEqual(fresh["gone_ids"], [])
-        self.assertIn("plus1", fresh["missing"])
-        self.assertIn("plus2", fresh["missing"])
+        self.assertEqual(fresh["gone"], [])
+        self.assertEqual(fresh["gone_count"], 0)
 
-    def test_zero_unfollows_when_the_window_is_stable(self):
-        report = ca.post_unfollows(self.posts, self.snap)
-        by_id = {row["post_id"]: row for row in report["posts"]}
-        stable = by_id[self.ids[0]]
-        self.assertEqual(stable["status"], "ok")
-        self.assertEqual(stable["gone_ids"], [])
-        self.assertEqual(stable["gone_count"], 0)
-
-    def test_baseline_uses_snapshot_just_before_post_day(self):
-        folder = tempfile.mkdtemp(prefix="xn-unf-gap-")
-        write_json(os.path.join(folder, "2026-11-11.json"), follower_list("8001", "8005"))
-        write_json(os.path.join(folder, "2026-11-13.json"), follower_list("8001", "8005"))
-        write_json(os.path.join(folder, "2026-11-14.json"), follower_list("8001"))
-        spicy = self.posts[self.posts["post_id"] == self.ids[1]]
-        row = ca.post_unfollow_rows(spicy, folder)[0]
+    def test_baseline_just_before_and_gap_is_no_snapshot(self):
+        before = tempfile.mkdtemp(prefix="xn-unf-gap-")
+        write_json(os.path.join(before, "2026-11-11.json"), users("stay1", "xray"))
+        write_json(os.path.join(before, "2026-11-13.json"), users("stay1", "xray"))
+        write_json(os.path.join(before, "2026-11-14.json"), users("stay1"))
+        row = by_date(ca.post_unfollows(self.posts, before))["2026-11-12"]
         self.assertEqual(row["status"], "ok")
-        self.assertEqual(row["baseline_date"], "2026-11-11")
-        self.assertEqual(row["gone_ids"], ["8005"])
+        self.assertEqual(row["gone"], ["xray"])
+        missing = tempfile.mkdtemp(prefix="xn-unf-miss-")
+        write_json(os.path.join(missing, "2026-11-12.json"), users("stay1"))
+        write_json(os.path.join(missing, "2026-11-14.json"), users("stay1"))
+        gap = by_date(ca.post_unfollows(self.posts, missing))["2026-11-12"]
+        self.assertEqual(gap["status"], "no_snapshot")
+        self.assertEqual(gap["gone_count"], 0)
 
-    def test_gap_in_plus1_is_no_snapshot(self):
-        folder = tempfile.mkdtemp(prefix="xn-unf-miss-")
-        write_json(os.path.join(folder, "2026-11-12.json"), follower_list("8001"))
-        write_json(os.path.join(folder, "2026-11-14.json"), follower_list("8001"))
-        spicy = self.posts[self.posts["post_id"] == self.ids[1]]
-        row = ca.post_unfollow_rows(spicy, folder)[0]
-        self.assertEqual(row["status"], "no_snapshot")
-        self.assertEqual(row["gone_count"], 0)
-        self.assertIn("plus1", row["missing"])
-
-    def test_markdown_is_short_and_plain(self):
+    def test_markdown_groups_and_caps_names(self):
         report = ca.analyze(self.exports, snapshot_dir=self.snap)
         text = ca.render_markdown(report)
         self.assertIn("Unfollows 24-48h after posts.", text)
         self.assertIn("Snapshots are daily, so the window is approximate.", text)
         self.assertIn("This is correlation, not cause.", text)
-        self.assertIn('"spicy post" (12 Nov): 1 unfollow (8002).', text)
-        self.assertNotIn("8004", text)
-        self.assertIn('"fresh post" (15 Nov): no snapshot.', text)
-        self.assertIn("1 other post had 0 unfollows.", text)
-        self.assertNotIn("9999", text)
-        payload = report["post_unfollows"]
-        self.assertEqual(payload["note"], ca.UNFOLLOW_NOTE)
-        self.assertEqual(len(payload["posts"]), 3)
+        self.assertIn(
+            "12 Nov: 1 original post, 2 replies -> 7 unfollows 24-48h later: "
+            "@a, @b, @c, @d, @e (+2 more).",
+            text,
+        )
+        self.assertIn("10 Nov: 1 original post, 0 replies -> 0 unfollows 24-48h later.", text)
+        self.assertIn("15 Nov: 1 original post, 0 replies: no snapshot.", text)
+        self.assertNotIn("8 Nov", text)
+        self.assertNotIn("old post", text)
+        self.assertNotIn("@early", text)
+        self.assertNotIn("@trap", text)
+        self.assertNotIn("@f", text)
+        unfollow_lines = [line for line in text.splitlines() if "Nov:" in line]
+        self.assertEqual(len(unfollow_lines), 3)
 
     def test_skipped_without_snapshot_dir(self):
         report = ca.analyze(self.exports)
@@ -194,26 +192,23 @@ class PostUnfollowsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with open(os.path.join(out, "what_worked_week.md"), encoding="utf-8") as fh:
             text = fh.read()
-        self.assertIn('"spicy post" (12 Nov): 1 unfollow (8002).', text)
+        self.assertIn("@a, @b, @c, @d, @e (+2 more).", text)
         self.assertIn("no snapshot.", text)
         with open(os.path.join(out, "what_worked_week.json"), encoding="utf-8") as fh:
             doc = json.load(fh)
-        spicy = next(row for row in doc["post_unfollows"]["posts"] if row["text"] == "spicy post")
-        self.assertEqual(spicy["gone_ids"], ["8002"])
-        cfg_dir = tempfile.mkdtemp(prefix="xn-unf-cfg-")
-        cfg = os.path.join(cfg_dir, "config.json")
+        spicy = by_date(doc["post_unfollows"])["2026-11-12"]
+        self.assertEqual(spicy["gone"][:5], ["a", "b", "c", "d", "e"])
+        cfg = os.path.join(tempfile.mkdtemp(prefix="xn-unf-cfg-"), "config.json")
         write_json(cfg, {"keyword_tags": ["Tesla"], "snapshot_dir": self.snap})
         out2 = tempfile.mkdtemp(prefix="xn-unf-out2-")
         cmd2 = [
             sys.executable, os.path.join(ROOT, "content_analytics.py"),
-            "--exports", self.exports, "--out", out2,
-            "--config", cfg,
+            "--exports", self.exports, "--out", out2, "--config", cfg,
         ]
         result2 = subprocess.run(cmd2, cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result2.returncode, 0, result2.stderr)
         with open(os.path.join(out2, "what_worked_week.md"), encoding="utf-8") as fh:
-            text2 = fh.read()
-        self.assertIn("1 unfollow (8002).", text2)
+            self.assertIn("7 unfollows 24-48h later", fh.read())
 
 
 if __name__ == "__main__":

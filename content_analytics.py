@@ -676,7 +676,6 @@ def load_me_id(config_path=None, data_dir=None):
 
 
 def load_snapshot_dir(config_path=None):
-    """Echo daily snapshot folder from config `snapshot_dir`. Same key as x_neighbours."""
     if not config_path:
         return None
     with open(config_path, encoding="utf-8") as fh:
@@ -815,76 +814,62 @@ UNFOLLOW_NOTE = (
     "Snapshots are daily, so the window is approximate. "
     "This is correlation, not cause."
 )
+UNFOLLOW_NAME_CAP = 5
 
 
-def follower_id_sets(snapshot_dir):
-    """UTC date to follower ids. Reuses the Echo dated JSON list loader."""
-    return {
-        date.fromisoformat(day): set(users)
-        for day, users in fw.snapshots(snapshot_dir)
-    }
-
-
-def _on_or_before(index, posted):
+def unfollow_window(index, posted):
+    plus1 = posted + timedelta(days=1)
+    plus2 = posted + timedelta(days=2)
     earlier = [day for day in index if day <= posted]
-    return max(earlier) if earlier else None
+    if not earlier or plus1 not in index or plus2 not in index:
+        return None
+    return max(earlier), plus1, plus2
 
 
-def post_unfollow_rows(posts, snapshot_dir):
-    """Per post in `posts`, ids present 1 day later and gone 2 days later.
-
-    Baseline is the snapshot on the post's UTC day, or the latest before it.
-    Day +1 and day +2 must exist as dated files. Missing any of the three is
-    `no_snapshot`. No interpolation across gaps.
-    """
-    index = follower_id_sets(snapshot_dir)
+def unfollow_days(posts, snapshot_dir):
+    index = {date.fromisoformat(day): users for day, users in fw.snapshots(snapshot_dir)}
     rows = []
     if posts is None or posts.empty:
         return rows
-    ordered = posts.sort_values("posted_at")
-    for _, post in ordered.iterrows():
-        posted_at = post["posted_at"]
-        posted = posted_at.astimezone(timezone.utc).date()
-        plus1 = posted + timedelta(days=1)
-        plus2 = posted + timedelta(days=2)
-        baseline = _on_or_before(index, posted)
-        missing = []
-        if baseline is None:
-            missing.append("baseline")
-        if plus1 not in index:
-            missing.append("plus1")
-        if plus2 not in index:
-            missing.append("plus2")
+    by_day = {}
+    for _, post in posts.sort_values("posted_at").iterrows():
+        posted = post["posted_at"].astimezone(timezone.utc).date()
+        bucket = by_day.setdefault(posted, {"originals": 0, "replies": 0})
+        if is_original(post.get("text", "")):
+            bucket["originals"] += 1
+        else:
+            bucket["replies"] += 1
+    for posted in sorted(by_day):
+        window = unfollow_window(index, posted)
         row = {
-            "post_id": str(post["post_id"]),
-            "text": clip_text(post.get("text", "")),
-            "posted_date": posted.isoformat(),
-            "baseline_date": baseline.isoformat() if baseline else None,
-            "plus1_date": plus1.isoformat(),
-            "plus2_date": plus2.isoformat(),
+            "date": posted.isoformat(),
+            "originals": by_day[posted]["originals"],
+            "replies": by_day[posted]["replies"],
+            "gone": [],
+            "gone_count": 0,
+            "status": "no_snapshot",
         }
-        if missing:
-            row["status"] = "no_snapshot"
-            row["missing"] = missing
-            row["gone_ids"] = []
-            row["gone_count"] = 0
+        if window is None:
             rows.append(row)
             continue
-        still = index[baseline] & index[plus1]
-        gone = sorted(still - index[plus2])
+        baseline, plus1, plus2 = window
+        still = set(index[baseline]) & set(index[plus1])
+        gone = still - set(index[plus2])
+        names = []
+        for uid in gone:
+            user = index[plus1].get(uid) or index[baseline].get(uid) or {}
+            name = str(user.get("username") or "").lstrip("@")
+            if name:
+                names.append(name)
         row["status"] = "ok"
-        row["missing"] = []
-        row["gone_ids"] = gone
+        row["gone"] = sorted(names, key=str.lower)
         row["gone_count"] = len(gone)
         rows.append(row)
     return rows
 
 
 def post_unfollows(posts, snapshot_dir):
-    return {
-        "note": UNFOLLOW_NOTE,
-        "posts": post_unfollow_rows(posts, snapshot_dir),
-    }
+    return {"note": UNFOLLOW_NOTE, "days": unfollow_days(posts, snapshot_dir)}
 
 
 def analyze(folder, keywords=None, data_dir=None, me_id=None, snapshot_dir=None):
@@ -1071,35 +1056,32 @@ def render_markdown(report):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _post_day_stamp(posted_date):
-    day = date.fromisoformat(str(posted_date))
-    return f"{day.day} {day.strftime('%b')}"
-
-
 def render_post_unfollows(unf):
-    """Short lines for the existing What worked section."""
+    def n(count, one, many):
+        return f"{count} {one if count == 1 else many}"
+
     lines = [f"Unfollows 24-48h after posts. {unf['note']}"]
-    zeros = 0
-    printed = False
-    for row in unf.get("posts") or []:
-        label = quoted(row) if row.get("text") else row["post_id"]
-        stamp = _post_day_stamp(row["posted_date"])
+    cap = UNFOLLOW_NAME_CAP
+    for row in unf.get("days") or []:
+        day = date.fromisoformat(row["date"])
+        stamp = f"{day.day} {day.strftime('%b')}"
+        mix = (
+            f"{n(row['originals'], 'original post', 'original posts')}, "
+            f"{n(row['replies'], 'reply', 'replies')}"
+        )
         if row.get("status") == "no_snapshot":
-            lines.append(f"{label} ({stamp}): no snapshot.")
-            printed = True
+            lines.append(f"{stamp}: {mix}: no snapshot.")
             continue
-        count = row.get("gone_count") or 0
-        if not count:
-            zeros += 1
-            continue
-        noun = "unfollow" if count == 1 else "unfollows"
-        ids = ", ".join(row.get("gone_ids") or [])
-        lines.append(f"{label} ({stamp}): {count} {noun} ({ids}).")
-        printed = True
-    if zeros:
-        noun = "post" if zeros == 1 else "posts"
-        other = "other " if printed else ""
-        lines.append(f"{zeros} {other}{noun} had 0 unfollows.")
+        noun = "unfollow" if row["gone_count"] == 1 else "unfollows"
+        line = f"{stamp}: {mix} -> {row['gone_count']} {noun} 24-48h later"
+        names = row.get("gone") or []
+        shown = ", ".join(f"@{name}" for name in names[:cap])
+        extra = len(names) - cap
+        if extra > 0:
+            shown = f"{shown} (+{extra} more)" if shown else f"(+{extra} more)"
+        if shown:
+            line += f": {shown}"
+        lines.append(line + ".")
     return lines
 
 

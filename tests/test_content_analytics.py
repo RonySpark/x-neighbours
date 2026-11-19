@@ -124,6 +124,23 @@ class ContentTypeTest(unittest.TestCase):
         self.assertEqual(tags, ["Tesla", "Adelaide"])
 
 
+class ClassifyPostTest(unittest.TestCase):
+    def test_url_query_is_not_a_question(self):
+        labels = ca.classify_post("Notes at https://example.com/page?q=1", [])
+        self.assertNotIn("question", labels)
+        self.assertIn("question", ca.classify_post("Is charging easier now?", []))
+
+    def test_t_co_does_not_match_other_hosts(self):
+        labels = ca.classify_post("See list.com for the names", [])
+        self.assertNotIn("link", labels)
+        self.assertIn("link", ca.classify_post("See t.co/abc", []))
+
+    def test_fraction_is_not_a_thread(self):
+        labels = ca.classify_post("3/4 of the way there", [])
+        self.assertNotIn("thread", labels)
+        self.assertIn("thread", ca.classify_post("1/ Three notes on posting", []))
+
+
 def this_week_posts():
     data = ca.load_exports(FIXTURES)
     end = ca.latest_export_date(data["overview"], data["content"])

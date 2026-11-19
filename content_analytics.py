@@ -834,17 +834,12 @@ def unfollow_days(posts, snapshot_dir):
     by_day = {}
     for _, post in posts.sort_values("posted_at").iterrows():
         posted = post["posted_at"].astimezone(timezone.utc).date()
-        bucket = by_day.setdefault(posted, {"originals": 0, "replies": 0})
-        if is_original(post.get("text", "")):
-            bucket["originals"] += 1
-        else:
-            bucket["replies"] += 1
+        by_day[posted] = by_day.get(posted, 0) + 1
     for posted in sorted(by_day):
         window = unfollow_window(index, posted)
         row = {
             "date": posted.isoformat(),
-            "originals": by_day[posted]["originals"],
-            "replies": by_day[posted]["replies"],
+            "posts": by_day[posted],
             "gone": [],
             "gone_count": 0,
             "status": "no_snapshot",
@@ -1057,23 +1052,17 @@ def render_markdown(report):
 
 
 def render_post_unfollows(unf):
-    def n(count, one, many):
-        return f"{count} {one if count == 1 else many}"
-
     lines = [f"Unfollows 24-48h after posts. {unf['note']}"]
     cap = UNFOLLOW_NAME_CAP
     for row in unf.get("days") or []:
         day = date.fromisoformat(row["date"])
         stamp = f"{day.day} {day.strftime('%b')}"
-        mix = (
-            f"{n(row['originals'], 'original post', 'original posts')}, "
-            f"{n(row['replies'], 'reply', 'replies')}"
-        )
+        posts = f"{row['posts']} post" if row["posts"] == 1 else f"{row['posts']} posts"
         if row.get("status") == "no_snapshot":
-            lines.append(f"{stamp}: {mix}: no snapshot.")
+            lines.append(f"{stamp}: {posts}: no snapshot.")
             continue
         noun = "unfollow" if row["gone_count"] == 1 else "unfollows"
-        line = f"{stamp}: {mix} -> {row['gone_count']} {noun} 24-48h later"
+        line = f"{stamp}: {posts} -> {row['gone_count']} {noun} 24-48h later"
         names = row.get("gone") or []
         shown = ", ".join(f"@{name}" for name in names[:cap])
         extra = len(names) - cap

@@ -93,8 +93,8 @@ def fixture_posts():
         (snowflake_id(utc(11, 8)), utc(11, 8), "old post"),
         (snowflake_id(utc(11, 10)), utc(11, 10), "stable post"),
         (snowflake_id(utc(11, 12, 12)), utc(11, 12, 12), "spicy post"),
-        (snowflake_id(utc(11, 12, 13)), utc(11, 12, 13), "@other agreed"),
-        (snowflake_id(utc(11, 12, 14)), utc(11, 12, 14), "@pal yes"),
+        (snowflake_id(utc(11, 12, 13)), utc(11, 12, 13), "follow up"),
+        (snowflake_id(utc(11, 12, 14)), utc(11, 12, 14), "also this"),
         (snowflake_id(utc(11, 15)), utc(11, 15), "fresh post"),
     ]
 
@@ -124,15 +124,12 @@ class PostUnfollowsTest(unittest.TestCase):
         )
         spicy = by_date(report)["2026-11-12"]
         self.assertEqual(spicy["status"], "ok")
-        self.assertEqual(spicy["originals"], 1)
-        self.assertEqual(spicy["replies"], 2)
+        self.assertEqual(spicy["posts"], 3)
         self.assertEqual(spicy["gone"], list(GONE))
         self.assertEqual(spicy["gone_count"], 7)
         self.assertNotIn("early", spicy["gone"])
-        stable = by_date(report)["2026-11-10"]
-        self.assertEqual(stable["gone_count"], 0)
-        self.assertEqual(stable["originals"], 1)
-        self.assertEqual(stable["replies"], 0)
+        self.assertEqual(by_date(report)["2026-11-10"]["gone_count"], 0)
+        self.assertEqual(by_date(report)["2026-11-10"]["posts"], 1)
 
     def test_missing_snapshot_is_named_not_guessed(self):
         fresh = by_date(ca.post_unfollows(self.posts, self.snap))["2026-11-15"]
@@ -162,12 +159,12 @@ class PostUnfollowsTest(unittest.TestCase):
         self.assertIn("Snapshots are daily, so the window is approximate.", text)
         self.assertIn("This is correlation, not cause.", text)
         self.assertIn(
-            "12 Nov: 1 original post, 2 replies -> 7 unfollows 24-48h later: "
+            "12 Nov: 3 posts -> 7 unfollows 24-48h later: "
             "@a, @b, @c, @d, @e (+2 more).",
             text,
         )
-        self.assertIn("10 Nov: 1 original post, 0 replies -> 0 unfollows 24-48h later.", text)
-        self.assertIn("15 Nov: 1 original post, 0 replies: no snapshot.", text)
+        self.assertIn("10 Nov: 1 post -> 0 unfollows 24-48h later.", text)
+        self.assertIn("15 Nov: 1 post: no snapshot.", text)
         self.assertNotIn("8 Nov", text)
         self.assertNotIn("old post", text)
         self.assertNotIn("@early", text)

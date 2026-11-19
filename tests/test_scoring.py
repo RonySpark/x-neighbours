@@ -145,10 +145,11 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(ranked["u2"], 15)
         self.assertEqual(ranked["u1"], 7)
 
-    def test_mutual_bonus_once_even_with_two_replies(self):
+    def test_mutual_bonus_for_each_first_level_reply(self):
         ranked = self.ranked(mutual_bonus=10)
-        # u1: 7 + 10. The second reply is on the owner's reply, so it adds no bonus.
-        self.assertEqual(ranked["u1"], 17)
+        # u1: activity 7, plus 10 for each of the two replies on the original post.
+        # The reply under the owner's own reply is not in that 7 and adds no bonus.
+        self.assertEqual(ranked["u1"], 27)
         # u2 is follows-you, not mutual
         self.assertEqual(ranked["u2"], 8)
 
@@ -185,9 +186,9 @@ class ScoringTest(unittest.TestCase):
         data = xn.Data(folder, "me")
         activity = xn.build_activity(
             data, self.since, self.now, 10, 1, 3, "both", self.now, mutual_bonus=10)
-        # 3 replies * 3, plus 10 for each of the two replies on original posts.
-        # The reply on the owner's reply adds none.
-        self.assertEqual(activity["ranked"]["u1"], 29)
+        # Two replies on original posts: 2 * 3 + 2 * 10.
+        # The reply under the owner's own reply is not in the score.
+        self.assertEqual(activity["ranked"]["u1"], 26)
 
     def test_new_follower_credit_once_for_follows_you(self):
         ranked = self.ranked(new_follower_credit=5)
@@ -196,9 +197,8 @@ class ScoringTest(unittest.TestCase):
 
     def test_mutual_new_follower_credited_once(self):
         ranked = self.ranked(mutual_bonus=2, new_follower_credit=1)
-        # u1 is a mutual. Activity 7 plus 2 for the one reply on an original post.
-        # The reply on the owner's reply adds no second bonus, and no new-follower credit.
-        self.assertEqual(ranked["u1"], 9)
+        # u1 is a mutual. Activity 7 plus 2 for each of the two replies on the original.
+        self.assertEqual(ranked["u1"], 11)
         # u2 follows the owner only. Activity 8 + credit 1, not 8+1+1.
         self.assertEqual(ranked["u2"], 9)
 

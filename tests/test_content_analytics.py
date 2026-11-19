@@ -731,5 +731,66 @@ class BlankPostIdTest(unittest.TestCase):
         self.assertEqual(ca.snowflake_utc(posts.iloc[0]["post_id"]).tzinfo, timezone.utc)
 
 
+def _funnel_posts(impressions, expands, visits, follows):
+    """One fictional post. Profile visits can exceed detail expands."""
+    return pd.DataFrame([{
+        "post_id": "10",
+        "text": "synthetic funnel post",
+        "impressions": impressions,
+        "engagements": 1,
+        "engagement_rate": 0.001,
+        "detail_expands": expands,
+        "profile_visits": visits,
+        "new_follows": follows,
+        "link": "",
+        "posted_at": datetime(2026, 11, 16, tzinfo=timezone.utc),
+    }])
+
+
+class FunnelVisitRateTest(unittest.TestCase):
+    def test_visit_rate_uses_impressions_when_visits_exceed_expands(self):
+        """Synthetic only. Visits and expands are not nested; do not report 500%."""
+        posts = _funnel_posts(impressions=1000, expands=10, visits=50, follows=5)
+        stats = ca.funnel_stats(posts)
+        self.assertLessEqual(stats["visit_rate"], 1)
+        self.assertAlmostEqual(stats["visit_rate"], 50 / 1000)
+        self.assertNotAlmostEqual(stats["visit_rate"], 1.0)
+        report = _times_report({"dropped": 0, "by_type": []})
+        report["funnel"] = {"overall": stats}
+        text = ca.render_markdown(report)
+        self.assertNotIn("500%", text)
+        funnel_line = [line for line in text.splitlines() if line.startswith("Funnel:")][0]
+        self.assertIn("5.0% of impressions visited the profile", funnel_line)
+
+
+class ContentOnlyImpressionsTest(unittest.TestCase):
+    def test_content_only_impressions_are_not_a_fake_zero(self):
+        """Synthetic only. A content export with no overview must not print Impressions 0."""
+        folder = tempfile.mkdtemp(prefix="xn-content-only-")
+        _write_csv(
+            folder, "content_7d.csv", CONTENT_HEADER,
+            [_content_row(OVERLAP_ID, "only content", 400, 3)],
+            1_700_000_100,
+        )
+        report = ca.analyze(folder)
+        self.assertEqual(report["scorecard"]["totals"]["impressions"]["this"], 400)
+        text = ca.render_markdown(report)
+        self.assertIn("Impressions 400", text)
+        self.assertNotIn("Impressions 0", text)
+
+
+class RoundedChangeTest(unittest.TestCase):
+    def test_change_that_rounds_to_zero_is_not_up_or_down_zero(self):
+        """Synthetic only. +0.4% and -0.4% round to 0% and must not print up/down 0%."""
+        up_tiny = ca.fmt_change(ca.change(1004, 1000))
+        down_tiny = ca.fmt_change(ca.change(996, 1000))
+        self.assertNotIn("up 0%", up_tiny)
+        self.assertNotIn("down 0%", down_tiny)
+        self.assertEqual(up_tiny, "same as last week")
+        self.assertEqual(down_tiny, "same as last week")
+        self.assertEqual(ca.fmt_change(ca.change(1010, 1000)), "up 1%")
+        self.assertEqual(ca.fmt_change(ca.change(990, 1000)), "down 1%")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -93,7 +93,7 @@ class EchoSnapshotTest(unittest.TestCase):
         self.assertNotIn("follower list is", report)
         self.assertIn("### Following vs followers", report)
         self.assertIn(
-            "Now (15 Nov): 3 followers · 2 verified · 2 following · 1 mutual",
+            "Now (15 Nov): 3 followers · 2 verified · 2 following · 1 mutual · ratio 1.50",
             report,
         )
         self.assertIn("7 days: not enough history", report)
@@ -169,19 +169,19 @@ class CountsTrendTest(unittest.TestCase):
         text = section_from(path)
         self.assertIn("### Following vs followers", text)
         self.assertIn(
-            "Now (16 Oct): 100 followers · 10 verified · 50 following · 20 mutuals",
+            "Now (16 Oct): 100 followers · 10 verified · 50 following · 20 mutuals · ratio 2.00",
             text,
         )
         self.assertIn("7 days: not enough history", text)
         self.assertIn("30 days: not enough history", text)
-        self.assertNotIn("Ratio", text)
+        self.assertNotIn("now vs", text)
 
     def test_eight_rows_have_seven_day_change_only(self):
         folder = tempfile.mkdtemp(prefix="xn-counts-8-")
         path = write_counts(folder, synthetic_counts(8))
         text = section_from(path)
         self.assertIn(
-            "Now (23 Oct): 107 followers · 13 verified · 51 following · 22 mutuals",
+            "Now (23 Oct): 107 followers · 13 verified · 51 following · 22 mutuals · ratio 2.10",
             text,
         )
         self.assertIn(
@@ -196,7 +196,7 @@ class CountsTrendTest(unittest.TestCase):
         path = write_counts(folder, synthetic_counts(31))
         text = section_from(path)
         self.assertIn(
-            "Now (15 Nov): 130 followers · 25 verified · 56 following · 30 mutuals",
+            "Now (15 Nov): 130 followers · 25 verified · 56 following · 30 mutuals · ratio 2.32",
             text,
         )
         self.assertIn(
@@ -210,6 +210,23 @@ class CountsTrendTest(unittest.TestCase):
             text,
         )
         self.assertNotIn("not enough history", text)
+
+    def test_exact_totals_not_abbreviated(self):
+        folder = tempfile.mkdtemp(prefix="xn-counts-exact-")
+        path = write_counts(folder, [{
+            "date": "2026-11-15",
+            "followers_total": 1376,
+            "followers_verified": 40,
+            "following_total": 1835,
+            "mutuals": 200,
+        }])
+        text = section_from(path)
+        self.assertIn(
+            "Now (15 Nov): 1,376 followers · 40 verified · 1,835 following · 200 mutuals · ratio 0.75",
+            text,
+        )
+        self.assertNotIn("1.4K", text)
+        self.assertNotIn("1.8K", text)
 
     def test_missing_file_skips_section_with_one_line(self):
         folder = tempfile.mkdtemp(prefix="xn-counts-missing-")

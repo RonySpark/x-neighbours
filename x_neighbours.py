@@ -184,6 +184,10 @@ def _follow_ratio(row):
     return row["followers_total"] / following
 
 
+def _fmt_count(n):
+    return f"{int(n or 0):,}"
+
+
 def _fmt_ratio(value):
     if value is None:
         return "n/a"
@@ -193,9 +197,9 @@ def _fmt_ratio(value):
 def _fmt_delta(n):
     n = int(n or 0)
     if n > 0:
-        return f"+{fmt_num(n)}"
+        return f"+{_fmt_count(n)}"
     if n < 0:
-        return f"-{fmt_num(-n)}"
+        return f"-{_fmt_count(-n)}"
     return "0"
 
 
@@ -205,18 +209,20 @@ def counts_section_lines(rows):
         return ["No counts.csv in the snapshot folder."]
     latest = rows[-1]
     stamp = f"{latest['date'].day} {latest['date'].strftime('%b')}"
+    mutuals = latest["mutuals"]
+    now_ratio = _follow_ratio(latest)
     now_bits = [
-        f"{fmt_num(latest['followers_total'])} followers",
-        f"{fmt_num(latest['followers_verified'])} verified",
-        f"{fmt_num(latest['following_total'])} following",
-        counted(latest["mutuals"], "mutual", "mutuals"),
+        f"{_fmt_count(latest['followers_total'])} followers",
+        f"{_fmt_count(latest['followers_verified'])} verified",
+        f"{_fmt_count(latest['following_total'])} following",
+        f"{_fmt_count(mutuals)} {'mutual' if mutuals == 1 else 'mutuals'}",
+        f"ratio {_fmt_ratio(now_ratio)}",
     ]
     lines = [
         "### Following vs followers",
         "",
         f"Now ({stamp}): " + " · ".join(now_bits),
     ]
-    now_ratio = _follow_ratio(latest)
     for days in COUNT_WINDOWS:
         if len(rows) < days + 1:
             lines.append(f"{days} days: not enough history")

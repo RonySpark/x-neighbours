@@ -754,7 +754,7 @@ def follower_share(data, start, end):
     """Follower vs non-follower share of this week's likers, reposters, and repliers.
 
     The follower set is the current `followers_*.json` snapshot that Data already
-    keeps (`get_users_me_followers`). Likes and reposts have no action time, so
+    keeps. Likes and reposts have no action time, so
     they count on owner posts in the week, same as build_activity. Replies use
     the mention timestamp and the same “reply to me” rule as Data.window.
     """

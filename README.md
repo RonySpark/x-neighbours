@@ -33,7 +33,7 @@ python3 -m pip install -r requirements.txt
 cp config.example.json config.json
 ```
 
-Edit `config.json` and set `handle` and `user_id` from the connected X account (`get_users_me`, or `get_users_by_username` for that same account). Follower and following lists come from the connected account, so the handle has to be that account.
+Edit `config.json` and set `handle` and `user_id` from the connected X account (`get_users_me`, or `get_users_by_username` for that same account). Follower and following lists come from Echo's daily snapshot (`--snapshot-dir /workspace/content/followers`, or config `snapshot_dir`). The handle still has to be the connected account, because posts, mentions, likes, and reposts are fetched for that account.
 
 ```bash
 python3 x_neighbours.py --help
@@ -106,13 +106,13 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `keyword_tags` | Words used to group posts in content analytics. Default `Tesla` and `Adelaide` |
 | `fresh_hours` | Optional. How many hours until the bot may offer a new report. Omit it and the bot estimates: 1 hour at 60 or more interactions a day, 3 hours from 15 to 59, 8 hours under 15 |
 | `good_neighbours` | Optional path to the personal list. Prefer `--good-neighbours`, because the file lives outside the repo. A missing file is an empty list. At most 20 people |
-| `snapshot_dir` | Optional Echo daily snapshot folder. Prefer `--snapshot-dir`. Newest `YYYY-MM-DD.json` is the follower list. `following/YYYY-MM-DD.json` is who you follow. When the option is absent, `followers_*.json` and `following_*.json` stay in use |
+| `snapshot_dir` | Echo daily snapshot folder. Prefer `--snapshot-dir /workspace/content/followers`. Newest `YYYY-MM-DD.json` is the follower list. `following/YYYY-MM-DD.json` is who you follow. When the option is absent, saved `followers_*.json` and `following_*.json` are the offline fallback |
 | `report` | `both` (default), `likes`, or `replies` |
 | `per_post`, `per_day` | Extra markdown sections. Off unless you ask |
 
 Other flags: `--config`, `--data`, `--snapshot-dir PATH`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`, `--mutual-reply-bonus`, `--new-follower-bonus`.
 
-`--snapshot-dir` reads Echo's daily folder (`/workspace/content/followers` on that machine). It picks the newest `YYYY-MM-DD.json` (a JSON list of users) and, when that file exists, `following/YYYY-MM-DD.json` (an id-to-user dict). Both are converted into the same `{data: [...]}` shape as `followers_*.json`. If `following/` is missing for that date, following stays empty. 👤? and mutuals then behave as they do with no `following_*.json`, and the report says so. Snapshot age uses the same "Followers (list from 16 Nov)" line as content analytics, including the stale warning after 7 days. The API follower pull is unchanged.
+`--snapshot-dir` is the source of truth for followers and following. Example: `--snapshot-dir /workspace/content/followers`. It picks the newest `YYYY-MM-DD.json` (a JSON list of users) and, when that file exists, `following/YYYY-MM-DD.json` (an id-to-user dict). Both are converted into the same `{data: [...]}` shape as `followers_*.json`. If `following/` is missing for that date, following stays empty. 👤? and mutuals then behave as they do with no `following_*.json`, and the report says so. Snapshot age uses the same "Followers (list from 16 Nov)" line as content analytics, including the stale warning after 7 days. Do not call `get_users_me_followers` or `get_users_me_following`. When `--snapshot-dir` is absent, the script falls back to saved `followers_*.json` and `following_*.json`.
 
 A plain run writes the markdown report and the neighbours picture. `--first-run` uses `first_run_days`. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
 
@@ -152,9 +152,10 @@ Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_twe
 | 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_posts`, `expansions=author_id` | `quotes_<postid>` |
 | 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_posts,conversation_id`, saved as `my_posts_1`. A failed call is skipped | `my_likes_1`, `my_posts_1` |
 | 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=10`, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts` | `latest_<userid>` |
-| 8 | `get_users_me_followers` and `get_users_me_following` | `max_results=1000`. Refresh on Mondays | `followers_1`, `following_1`, … |
 
-On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on the built-in public X tools. Likers, followers, following, liked posts, and bookmarks are on the owner's X plugin. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.
+Followers and following are not in that table. Pass `--snapshot-dir /workspace/content/followers` (or set `snapshot_dir`). Do not call `get_users_me_followers` or `get_users_me_following`.
+
+On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on the built-in public X tools. Likers, liked posts, and bookmarks are on the owner's X plugin. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.
 
 ### Keeping the read count down
 
@@ -169,7 +170,7 @@ Likes, reposts, and quotes are one call per post:
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.
 - Keep paging while `next_token` is present and you are inside the day's budget. A 25-item page is not complete if a next token remains.
 
-Follower lists refresh on Monday only. The Monday run reuses that morning's daily files and only fetches the earlier part of the week, including likes, reposts, and quotes. The two runs share the 1,000-read cap. The steps are in [BOT.md](BOT.md).
+Follower and following lists come from `--snapshot-dir`. The Monday run reuses that morning's daily files and only fetches the earlier part of the week, including likes, reposts, and quotes. The two runs share the 1,000-read cap. The steps are in [BOT.md](BOT.md).
 
 ## Try the sample
 

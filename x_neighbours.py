@@ -171,19 +171,45 @@ def load_counts_csv(path):
     return rows
 
 
+def _required_count(raw, key):
+    text = str(raw.get(key, "")).strip()
+    if text == "":
+        raise ValueError(key)
+    return int(text)
+
+
+def _optional_count(raw, key):
+    text = str(raw.get(key) or "").strip()
+    if text == "":
+        return None
+    return int(text)
+
+
 def _parse_count_row(raw):
     try:
         day = date.fromisoformat((raw.get("date") or "").strip())
-        nums = {key: int(str(raw.get(key, "")).strip()) for key in COUNT_FIELDS}
+        followers_total = _required_count(raw, "followers_total")
+        followers_verified = _required_count(raw, "followers_verified")
+        following_total = _optional_count(raw, "following_total")
+        mutuals = _optional_count(raw, "mutuals")
     except (TypeError, ValueError, AttributeError):
         return None
-    nums["date"] = day
-    return nums
+    return {
+        "date": day,
+        "followers_total": followers_total,
+        "followers_verified": followers_verified,
+        "following_total": following_total,
+        "mutuals": mutuals,
+    }
+
+
+def _has_following(row):
+    return row.get("following_total") is not None
 
 
 def _follow_ratio(row):
-    following = row["following_total"]
-    if following <= 0:
+    following = row.get("following_total")
+    if following is None or following <= 0:
         return None
     return row["followers_total"] / following
 
@@ -213,15 +239,19 @@ def counts_section_lines(rows):
         return ["No counts.csv in the snapshot folder."]
     latest = rows[-1]
     stamp = f"{latest['date'].day} {latest['date'].strftime('%b')}"
-    mutuals = latest["mutuals"]
-    now_ratio = _follow_ratio(latest)
     now_bits = [
         f"{_fmt_count(latest['followers_total'])} followers",
         f"{_fmt_count(latest['followers_verified'])} verified",
-        f"{_fmt_count(latest['following_total'])} following",
-        f"{_fmt_count(mutuals)} {'mutual' if mutuals == 1 else 'mutuals'}",
-        f"ratio {_fmt_ratio(now_ratio)}",
     ]
+    now_ratio = None
+    if _has_following(latest):
+        now_ratio = _follow_ratio(latest)
+        now_bits.append(f"{_fmt_count(latest['following_total'])} following")
+        mutuals = latest.get("mutuals")
+        if mutuals is not None:
+            noun = "mutual" if mutuals == 1 else "mutuals"
+            now_bits.append(f"{_fmt_count(mutuals)} {noun}")
+        now_bits.append(f"ratio {_fmt_ratio(now_ratio)}")
     lines = [
         "### Following vs followers",
         "",
@@ -233,14 +263,19 @@ def counts_section_lines(rows):
             continue
         then = rows[-(days + 1)]
         bits = [
-            f"{label} {_fmt_delta(latest[key] - then[key])}"
-            for key, label in COUNT_METRICS
+            f"followers {_fmt_delta(latest['followers_total'] - then['followers_total'])}",
+            f"verified {_fmt_delta(latest['followers_verified'] - then['followers_verified'])}",
         ]
-        then_ratio = _follow_ratio(then)
-        lines.append(
-            f"{days} days: " + " · ".join(bits)
-            + f". Ratio {_fmt_ratio(now_ratio)} now vs {_fmt_ratio(then_ratio)} then"
-        )
+        ratio = ""
+        if _has_following(latest) and _has_following(then):
+            bits.append(
+                f"following {_fmt_delta(latest['following_total'] - then['following_total'])}"
+            )
+            if latest.get("mutuals") is not None and then.get("mutuals") is not None:
+                bits.append(f"mutuals {_fmt_delta(latest['mutuals'] - then['mutuals'])}")
+            then_ratio = _follow_ratio(then)
+            ratio = f". Ratio {_fmt_ratio(now_ratio)} now vs {_fmt_ratio(then_ratio)} then"
+        lines.append(f"{days} days: " + " · ".join(bits) + ratio)
     return lines
 
 
@@ -253,21 +288,24 @@ def adelaide_snapshot_date(day_str):
 
 
 def count_row_from_snapshot(folder, day, followers):
-    following = {}
-    path = os.path.join(folder, "following", f"{day}.json")
-    if os.path.isfile(path):
-        _, payload = load(path)[0]
-        if isinstance(payload, dict):
-            following = {str(key): user for key, user in payload.items() if isinstance(user, dict)}
-    follower_ids = set(followers)
     verified = sum(1 for user in followers.values() if user.get("verified"))
-    return {
+    row = {
         "date": adelaide_snapshot_date(day),
         "followers_total": len(followers),
         "followers_verified": verified,
-        "following_total": len(following),
-        "mutuals": len(follower_ids & set(following)),
+        "following_total": None,
+        "mutuals": None,
     }
+    path = os.path.join(folder, "following", f"{day}.json")
+    if not os.path.isfile(path):
+        return row
+    _, payload = load(path)[0]
+    following = {}
+    if isinstance(payload, dict):
+        following = {str(key): user for key, user in payload.items() if isinstance(user, dict)}
+    row["following_total"] = len(following)
+    row["mutuals"] = len(set(followers) & set(following))
+    return row
 
 
 def write_counts_csv(path, rows):
@@ -281,7 +319,7 @@ def write_counts_csv(path, rows):
             for row in rows:
                 writer.writerow({
                     "date": row["date"].isoformat(),
-                    **{key: row[key] for key in COUNT_FIELDS},
+                    **{key: "" if row[key] is None else row[key] for key in COUNT_FIELDS},
                 })
         os.replace(tmp, path)
     except Exception:

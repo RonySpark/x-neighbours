@@ -8,7 +8,7 @@ python3 version.py
 
 ## Unreleased
 
-- `--backfill-counts` adds missing `counts.csv` rows from follower snapshots, one Adelaide date each, and leaves an existing date as it is. A second run writes the same file.
+- `--backfill-counts` adds missing `counts.csv` rows from follower snapshots, one Adelaide date each, and leaves an existing date as it is. A day with no following snapshot leaves following and mutuals blank. The trend skips a blank day for following, mutuals, and ratio. A second run writes the same file.
 - The neighbours report lists who unfollowed between follower snapshots, grouped by the later file's date in the config timezone. A blank timezone uses Australia/Adelaide.
 - `mutual_bonus` is added once for each reply from a mutual on an original post. A reply under the owner's own reply adds none.
 - Replies lists only a first-level reply or a quote on the owner's original post, newest first. A reply under the owner's own reply drops off. Waiting is still one row per person, and only when their latest message in that thread has no reply from the owner. ([#39](https://github.com/Skybatan/x-neighbours/pull/39))

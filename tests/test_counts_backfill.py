@@ -7,6 +7,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
+
+import x_neighbours as xn
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIELDS = (
@@ -100,9 +103,41 @@ class CountsBackfillTest(unittest.TestCase):
             "date": "2026-11-15",
             "followers_total": "1",
             "followers_verified": "0",
-            "following_total": "0",
-            "mutuals": "0",
+            "following_total": "",
+            "mutuals": "",
         }])
+
+    def test_no_following_file_stays_empty_and_the_trend_skips_it(self):
+        folder = tempfile.mkdtemp(prefix="xn-backfill-gap-")
+        for offset in range(7):
+            day = date(2026, 10, 16) + timedelta(days=offset)
+            dump(os.path.join(folder, f"{day.isoformat()}.json"), [user("b", "bob")])
+        dump(os.path.join(folder, "2026-10-23.json"), [
+            user("a", "alice", True),
+            user("b", "bob"),
+        ])
+        dump(os.path.join(folder, "following", "2026-10-23.json"), {
+            "a": user("a", "alice", True),
+        })
+        path = os.path.join(folder, "counts.csv")
+        result = run_backfill(folder)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(path, newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertEqual(rows[0]["date"], "2026-10-16")
+        self.assertEqual(rows[0]["followers_total"], "1")
+        self.assertEqual(rows[0]["following_total"], "")
+        self.assertEqual(rows[0]["mutuals"], "")
+        self.assertEqual(rows[-1]["following_total"], "1")
+        self.assertEqual(rows[-1]["mutuals"], "1")
+        loaded = xn.load_counts_csv(path)
+        self.assertIsNone(loaded[0]["following_total"])
+        self.assertIsNone(loaded[0]["mutuals"])
+        text = "\n".join(xn.counts_section_lines(loaded))
+        self.assertIn("Now (23 Oct): 2 followers · 1 verified · 1 following · 1 mutual · ratio 2.00", text)
+        self.assertIn("7 days: followers +1 · verified +1", text)
+        self.assertNotIn("following", text.split("7 days:", 1)[1])
+        self.assertNotIn("0 following", text)
 
 
 if __name__ == "__main__":

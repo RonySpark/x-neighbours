@@ -29,7 +29,7 @@ Usage:
                       [--now 2026-11-04T18:00:00Z]
                       [--rings 3] [--top 10]
                       [--report likes|replies|both] [--per-post] [--per-day]
-                      [--good-neighbours PATH]
+                      [--good-neighbours PATH] [--version]
 """
 import argparse
 import csv
@@ -39,11 +39,14 @@ import math
 import os
 import re
 import sys
+import unicodedata
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+import version as xn_version
 
 
 def load(pattern):
@@ -331,6 +334,9 @@ class Data:
         self._authors = {}
         self._conversations = {}
         self._my_posts = []
+        self.owner_original_ids = set()
+        self.owner_reply_ids = set()
+        self._expanded_posts = []
         self.likes_truncated = []
         for _, doc in load(os.path.join(data_dir, "posts_*.json")):
             for post in doc.get("data") or []:
@@ -345,10 +351,9 @@ class Data:
                 self._index_post(post)
                 if post.get("author_id", self.me) == self.me:
                     self.posts[post["id"]] = post
-                    for ref in referenced(post):
-                        if ref.get("type") == "replied_to" and ref.get("id"):
-                            self.owner_replied_to.add(str(ref["id"]))
+                    self._note_owner_post(post, assume_owner=True)
             self._users((doc.get("includes") or {}).get("users") or [])
+            self._expanded_posts.extend(included_posts(doc))
         for _, doc in load(os.path.join(data_dir, "mentions_*.json")):
             for mention in doc.get("data") or []:
                 mention = set_referenced(dict(mention))
@@ -368,6 +373,7 @@ class Data:
                 self._index_post(mention)
                 self.mentions.append(mention)
             self._users((doc.get("includes") or {}).get("users") or [])
+            self._expanded_posts.extend(included_posts(doc))
         for path, doc in load(os.path.join(data_dir, "likes_*.json")):
             match = re.search(r"likes_(\d+)", os.path.basename(path))
             if not match:
@@ -519,6 +525,9 @@ class Data:
                 post["id"] = str(post["id"])
                 if post.get("author_id") is not None:
                     post["author_id"] = str(post["author_id"])
+                author = post.get("author_id")
+                if author not in (None, "") and author != uid:
+                    continue
                 if post.get("in_reply_to_user_id") is not None:
                     post["in_reply_to_user_id"] = str(post["in_reply_to_user_id"])
                 if post.get("conversation_id") is not None:
@@ -552,20 +561,78 @@ class Data:
             if kind in ("replied_to", "quoted", "retweeted"):
                 self.engaged.add(str(ref["id"]))
 
+    def _note_owner_post(self, post, assume_owner=False):
+        """Record an owner post as original or as a reply, and who it answered.
+
+        A direct reply is answered when this post's replied_to id is that reply.
+        Expanded parents can be sparse, so a known reply is never reclassified
+        as an original.
+        """
+        if not isinstance(post, dict):
+            return
+        post = set_referenced(dict(post))
+        pid = post.get("id")
+        if pid is None:
+            return
+        pid = str(pid)
+        author = post.get("author_id")
+        if author is None:
+            if not assume_owner:
+                return
+        elif str(author) != self.me:
+            return
+        reply_targets = referenced_ids(post, "replied_to")
+        for target in reply_targets:
+            self.owner_replied_to.add(target)
+        if pid in self.owner_reply_ids:
+            return
+        if reply_targets or not is_owner_original_post(post):
+            self.owner_reply_ids.add(pid)
+            self.owner_original_ids.discard(pid)
+            return
+        self.owner_original_ids.add(pid)
+
+    def _note_expanded_posts(self):
+        for raw in self._expanded_posts:
+            if not isinstance(raw, dict):
+                continue
+            post = set_referenced(dict(raw))
+            if post.get("id") is not None:
+                post["id"] = str(post["id"])
+            if post.get("author_id") is not None:
+                post["author_id"] = str(post["author_id"])
+            self._note_owner_post(post, assume_owner=False)
+
+    def owner_post_ids(self):
+        return set(self.posts) | self.owner_original_ids | self.owner_reply_ids
+
     def _load_engagement(self):
         """Post ids the owner already liked, replied to, reposted, or quoted.
 
         Missing files leave the set empty apart from replies already in posts_*.json.
+        Replies in my_posts_*.json also mark those ids answered.
         """
+        my_posts = []
+        for doc in load_soft(os.path.join(self.data_dir, "my_posts_*.json")):
+            for raw in doc.get("data") or []:
+                if not isinstance(raw, dict):
+                    continue
+                post = set_referenced(dict(raw))
+                if post.get("id") is not None:
+                    post["id"] = str(post["id"])
+                if post.get("author_id") is not None:
+                    post["author_id"] = str(post["author_id"])
+                self._note_owner_post(post, assume_owner=True)
+                my_posts.append(post)
+            self._expanded_posts.extend(included_posts(doc))
+        self._note_expanded_posts()
         self.engaged = set(self.owner_replied_to)
         for post in self.posts.values():
             self._add_owner_targets(post)
-        for doc in load_soft(os.path.join(self.data_dir, "my_posts_*.json")):
-            for post in doc.get("data") or []:
-                post = set_referenced(dict(post))
-                self._index_post(post)
-                self._my_posts.append(post)
-                self._add_owner_targets(post)
+        for post in my_posts:
+            self._index_post(post)
+            self._my_posts.append(post)
+            self._add_owner_targets(post)
         for doc in load_soft(os.path.join(self.data_dir, "my_likes_*.json")):
             for post in doc.get("data") or []:
                 if isinstance(post, dict) and post.get("id") is not None:
@@ -632,9 +699,8 @@ class Data:
                 continue
             if not self._in_window(mention.get("created_at"), since, until):
                 continue
-            refs = [ref.get("id") for ref in referenced(mention)
-                    if ref.get("type") == "replied_to"]
-            if mention.get("in_reply_to_user_id") == self.me or any(ref in self.posts for ref in refs):
+            parent = next(iter(referenced_ids(mention, "replied_to")), None)
+            if parent and parent in self.owner_original_ids:
                 replies[mention["author_id"]] += 1
         excluded = getattr(self, "exclude", set())
         for counts in (likes, replies):
@@ -647,20 +713,73 @@ class Data:
 def is_original_post(post):
     """A catch-up post is their own writing: not a reply and not a plain repost.
 
-    Quote posts are kept. A quote that is also a reply is a reply.
+    A quote counts. It is their text, and its conversation id is its own id.
+    A quote that is also a reply does not count. A plain repost does not.
+    Replies are recognised from in_reply_to_*, a replied_to reference
+    (referenced_tweets or referenced_posts), or a conversation_id that is
+    not this post's id. The last case is what the API sends when reply
+    fields were not requested.
     """
     if not post:
         return False
     if post.get("in_reply_to_user_id"):
         return False
+    for key in ("in_reply_to_tweet_id", "in_reply_to_status_id", "in_reply_to_post_id"):
+        if post.get(key):
+            return False
     text = post.get("text") or ""
     if text.startswith("RT @"):
         return False
+    kinds = set()
     for ref in referenced(post):
-        kind = (ref.get("type") or "").lower()
-        if kind in ("replied_to", "retweeted"):
-            return False
+        kinds.add((ref.get("type") or "").replace("-", "_").lower())
+    if kinds & {"replied_to", "reply", "retweeted", "retweet", "reposted", "repost"}:
+        return False
+    # A quote is their own post. Some payloads set conversation_id to the
+    # quoted post; that must not throw the quote out.
+    if kinds & {"quoted", "quote"}:
+        return True
+    conversation = post.get("conversation_id")
+    post_id = post.get("id")
+    if conversation is not None and post_id is not None and str(conversation) != str(post_id):
+        return False
     return True
+
+
+def is_owner_original_post(post):
+    """Owner post that is not itself a reply.
+
+    conversation_id, when present, is the thread root. A reply keeps that root
+    even when the saved object has no referenced_tweets of its own.
+    """
+    if not is_original_post(post):
+        return False
+    root = post.get("conversation_id")
+    if root and str(root) != str(post.get("id")):
+        return False
+    return True
+
+
+def referenced_ids(post, kind):
+    want = (kind or "").lower()
+    found = []
+    for ref in referenced(post):
+        if (ref.get("type") or "").lower() == want and ref.get("id"):
+            found.append(str(ref["id"]))
+    return found
+
+
+def included_posts(doc):
+    """Posts expanded onto a response, under includes.tweets or includes.posts."""
+    includes = doc.get("includes") if isinstance(doc, dict) else None
+    if not isinstance(includes, dict):
+        return []
+    rows = []
+    for key in ("tweets", "posts"):
+        chunk = includes.get(key) or []
+        if isinstance(chunk, list):
+            rows.extend(item for item in chunk if isinstance(item, dict))
+    return rows
 
 
 def like_count(post):
@@ -813,6 +932,32 @@ FONTS = (
      "/System/Library/Fonts/Supplemental/Arial.ttf"),
     ("C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf"),
 )
+# Used when the UI font has no glyph (Hangul, CJK, kana). First match wins.
+CJK_FONTS = (
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "C:/Windows/Fonts/malgun.ttf",
+    "C:/Windows/Fonts/malgunbd.ttf",
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/msgothic.ttc",
+)
+# Color emoji fonts are bitmap faces and only load at a fixed pixel size.
+EMOJI_FONTS = (
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+    "C:/Windows/Fonts/seguiemj.ttf",
+)
+EMOJI_FONT_SIZE = 109
+_FONT_CACHE = {}
+_GLYPH_CACHE = {}
+_PROBE_INK = {}
 
 
 def font(size, bold=True):
@@ -825,6 +970,312 @@ def font(size, bold=True):
         if os.path.exists(other):
             return ImageFont.truetype(other, size)
     return ImageFont.load_default()
+
+
+def _cached_font(path, size):
+    key = (path, size)
+    loaded = _FONT_CACHE.get(key)
+    if loaded is not None:
+        return loaded
+    from PIL import ImageFont
+    try:
+        loaded = ImageFont.truetype(path, size)
+    except OSError:
+        loaded = None
+    _FONT_CACHE[key] = loaded
+    return loaded
+
+
+def cjk_font(size):
+    for path in CJK_FONTS:
+        if os.path.exists(path):
+            loaded = _cached_font(path, size)
+            if loaded is not None:
+                return loaded
+    return None
+
+
+def emoji_font():
+    for path in EMOJI_FONTS:
+        if not os.path.exists(path):
+            continue
+        loaded = _cached_font(path, EMOJI_FONT_SIZE)
+        if loaded is not None:
+            return loaded
+    return None
+
+
+def _font_key(face):
+    return (getattr(face, "path", None), getattr(face, "size", None), id(face))
+
+
+def _font_covers(face, char):
+    """True when face can draw char. Whitespace and joiners always count."""
+    if not char or char.isspace():
+        return True
+    if unicodedata.category(char) in ("Mn", "Me", "Mc", "Cf", "Cc"):
+        return True
+    key = _font_key(face) + (char,)
+    cached = _GLYPH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        bbox = face.getbbox(char)
+    except (OSError, ValueError):
+        _GLYPH_CACHE[key] = False
+        return False
+    if bbox[3] <= bbox[1]:
+        _GLYPH_CACHE[key] = False
+        return False
+    missing = _notdef_ink(face)
+    covered = _ink_bytes(face, char) != missing
+    _GLYPH_CACHE[key] = covered
+    return covered
+
+
+def _notdef_ink(face):
+    key = _font_key(face)
+    cached = _PROBE_INK.get(key)
+    if cached is None:
+        cached = _ink_bytes(face, "\uffff")
+        _PROBE_INK[key] = cached
+    return cached
+
+
+def _ink_bytes(face, char):
+    from PIL import Image, ImageDraw
+    size = max(8, int(getattr(face, "size", 16) or 16))
+    image = Image.new("L", (size * 3, size * 2), 0)
+    try:
+        ImageDraw.Draw(image).text((1, 1), char, font=face, fill=255)
+    except (OSError, ValueError):
+        return b""
+    return image.tobytes()
+
+
+def _cluster_continues(nxt, current):
+    if current.endswith("\u200d"):
+        return True
+    if nxt in ("\u200d", "\ufe0e", "\ufe0f"):
+        return True
+    if unicodedata.category(nxt) in ("Mn", "Me", "Mc"):
+        return True
+    return "\U0001F3FB" <= nxt <= "\U0001F3FF"
+
+
+def text_clusters(text):
+    """User-visible pieces. Emoji sequences and combining marks stay together."""
+    chars = list(text or "")
+    clusters = []
+    index = 0
+    while index < len(chars):
+        piece = chars[index]
+        index += 1
+        if "\U0001F1E6" <= piece <= "\U0001F1FF" and index < len(chars) and "\U0001F1E6" <= chars[index] <= "\U0001F1FF":
+            piece += chars[index]
+            index += 1
+        while index < len(chars) and _cluster_continues(chars[index], piece):
+            piece += chars[index]
+            index += 1
+        clusters.append(piece)
+    return clusters
+
+
+def _is_emoji(cluster):
+    for char in cluster:
+        code = ord(char)
+        if code >= 0x1F000 or code == 0x20E3:
+            return True
+        if 0x2300 <= code <= 0x23FF or 0x2600 <= code <= 0x27BF or 0x2B00 <= code <= 0x2BFF:
+            return True
+        if 0x1F1E6 <= code <= 0x1F1FF:
+            return True
+    return False
+
+
+class LabelFace:
+    """One label size, with a CJK font and a scaled color-emoji font when present."""
+
+    def __init__(self, size, bold=True):
+        self.size = max(1, int(size))
+        self.bold = bold
+        self.primary = font(self.size, bold=bold)
+        self.cjk = cjk_font(self.size)
+        self.emoji = emoji_font()
+        self._sprites = {}
+
+    def kind(self, cluster):
+        if not cluster:
+            return None
+        if _is_emoji(cluster) and self._emoji_covers(cluster):
+            return "emoji"
+        if self._covers(self.primary, cluster):
+            return "primary"
+        if self.cjk is not None and self._covers(self.cjk, cluster):
+            return "cjk"
+        return None
+
+    def _covers(self, face, cluster):
+        return all(_font_covers(face, char) for char in cluster)
+
+    def _emoji_covers(self, cluster):
+        if self.emoji is None:
+            return False
+        try:
+            bbox = self.emoji.getbbox(cluster)
+        except (OSError, ValueError):
+            return False
+        return bbox[3] > bbox[1]
+
+    def runs(self, text):
+        runs = []
+        for cluster in text_clusters(text):
+            kind = self.kind(cluster)
+            if kind is None:
+                continue
+            if runs and runs[-1][0] == kind and kind != "emoji":
+                runs[-1][1] += cluster
+            else:
+                runs.append([kind, cluster])
+        return runs
+
+    def width(self, text):
+        total = 0
+        for kind, chunk in self.runs(text):
+            total += self._chunk_width(kind, chunk)
+        return total
+
+    def _chunk_width(self, kind, chunk):
+        if kind == "emoji":
+            return sum(self._sprite(cluster).width for cluster in text_clusters(chunk))
+        face = self.cjk if kind == "cjk" else self.primary
+        try:
+            return face.getlength(chunk)
+        except (OSError, ValueError, AttributeError):
+            return float(len(chunk) * self.size * 0.6)
+
+    def _sprite(self, cluster):
+        cached = self._sprites.get(cluster)
+        if cached is not None:
+            return cached
+        from PIL import Image, ImageDraw
+        bbox = self.emoji.getbbox(cluster)
+        width = max(1, bbox[2] - bbox[0])
+        height = max(1, bbox[3] - bbox[1])
+        sheet = Image.new("RGBA", (width + 2, height + 2), (0, 0, 0, 0))
+        ImageDraw.Draw(sheet).text(
+            (1 - bbox[0], 1 - bbox[1]), cluster, font=self.emoji, embedded_color=True)
+        target_h = max(8, self.size)
+        target_w = max(1, round(sheet.width * target_h / sheet.height))
+        sheet = sheet.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        self._sprites[cluster] = sheet
+        return sheet
+
+    def fit(self, text, limit):
+        """Shorten text so it fits on one line. Drop characters no font can draw."""
+        clusters = [cluster for cluster in text_clusters(text) if self.kind(cluster)]
+        if not clusters:
+            return ""
+        if limit <= 0:
+            return ""
+        if self._width_of(clusters) <= limit:
+            return "".join(clusters)
+        ellipsis = "…" if self.kind("…") else ""
+        while clusters:
+            body = "".join(clusters).rstrip()
+            fitted = body + ellipsis if body else ""
+            if fitted and self.width(fitted) <= limit:
+                return fitted
+            clusters.pop()
+            while clusters and clusters[-1].isspace():
+                clusters.pop()
+        return ""
+
+    def _width_of(self, clusters):
+        return self.width("".join(clusters))
+
+    def draw(self, draw, image, text, x, y, fill):
+        cursor = x
+        for kind, chunk in self.runs(text):
+            if kind == "emoji":
+                for cluster in text_clusters(chunk):
+                    sprite = self._sprite(cluster)
+                    if image is not None:
+                        _paste(image, sprite, cursor, y)
+                    cursor += sprite.width
+                continue
+            face = self.cjk if kind == "cjk" else self.primary
+            draw.text((cursor, y), chunk, font=face, fill=fill)
+            cursor += self._chunk_width(kind, chunk)
+
+
+def _paste(image, sprite, x, y):
+    try:
+        image.paste(sprite, (int(x), int(y)), sprite)
+    except (ValueError, IndexError):
+        return
+
+
+def picture_lines(user):
+    """Lines under one avatar: display name, then @username.
+
+    A missing or blank name leaves the @username on its own.
+    """
+    username = re.sub(r"\s+", "", str((user or {}).get("username") or "").strip().lstrip("@"))
+    handle = f"@{username}" if username else ""
+    name = re.sub(r"\s+", " ", str((user or {}).get("name") or "").replace("\n", " ").replace("\r", " ")).strip()
+    if not name:
+        return (handle,) if handle else ()
+    if handle:
+        return (name, handle)
+    return (name,)
+
+
+def fitted_picture_lines(lines, name_face, handle_face, limit):
+    """The lines actually drawn. An unrenderable name falls back to @username."""
+    lines = tuple(lines or ())
+    if not lines:
+        return []
+    if len(lines) == 1:
+        text = name_face.fit(lines[0], limit)
+        return [text] if text else []
+    name = name_face.fit(lines[0], limit)
+    handle = handle_face.fit(lines[1], limit)
+    drawn = []
+    if name:
+        drawn.append(name)
+    if handle:
+        drawn.append(handle)
+    return drawn
+
+
+def draw_caption(draw, image, lines, name_face, handle_face, x, y, limit,
+                 fill_bg, fill_name, fill_handle, scale):
+    """One pill under an avatar. Display name on top, @username smaller below."""
+    drawn = fitted_picture_lines(lines, name_face, handle_face, limit)
+    if not drawn:
+        return
+    if len(drawn) == 1:
+        specs = [(drawn[0], name_face, fill_name)]
+    else:
+        specs = [(drawn[0], name_face, fill_name), (drawn[1], handle_face, fill_handle)]
+    widths = [face.width(text) for text, face, _fill in specs]
+    text_width = max(widths) if widths else 0
+    pad_x = 6 * scale
+    pad_top = 2 * scale
+    # The old one-line pill left about 4*scale under the em square so @ and y fit.
+    pad_bottom = 4 * scale
+    gap = 2 * scale
+    block = sum(face.size for _text, face, _fill in specs) + gap * (len(specs) - 1)
+    left = x - text_width / 2
+    top = y
+    box = (left - pad_x, top - pad_top, left + text_width + pad_x, top + block + pad_bottom)
+    radius = max(1, (box[3] - box[1]) / 2)
+    draw.rounded_rectangle(box, radius=radius, fill=fill_bg)
+    cursor = top
+    for text, face, fill in specs:
+        face.draw(draw, image, text, x - face.width(text) / 2, cursor, fill)
+        cursor += face.size + gap
 
 
 def fetch_avatar(user, cache_dir, size):
@@ -928,27 +1379,6 @@ def draw_house_frame(draw, x, y, size, color, width, gap, roof=0.32):
               fill=color, width=width, joint="curve")
 
 
-def fit_label(draw, text, face, limit):
-    while draw.textlength(text, font=face) > limit and len(text) > 4:
-        text = text[:-2] + "…"
-    return text
-
-
-def draw_label_at(draw, text, face, x, y, fill_bg, fill_text, scale):
-    """Draw a pill whose top-left is (x, y)."""
-    text_width = draw.textlength(text, font=face)
-    text_height = face.size + 6 * scale
-    box = (x - 6 * scale, y - 2 * scale, x + text_width + 6 * scale, y + text_height - 2 * scale)
-    draw.rounded_rectangle(box, radius=text_height / 2, fill=fill_bg)
-    draw.text((x, y), text, font=face, fill=fill_text)
-
-
-def draw_label(draw, text, face, x, y, anchor, fill_bg, fill_text, scale):
-    text = fit_label(draw, text, face, anchor)
-    text_width = draw.textlength(text, font=face)
-    draw_label_at(draw, text, face, x - text_width / 2, y, fill_bg, fill_text, scale)
-
-
 def draw_circle(data, me_user, scores, path, rings=3, show_names=True, width=1200,
                 subtitle="Top neighbours of the last 7 days", theme="midnight"):
     theme_colors = THEMES.get(theme, THEMES["midnight"])
@@ -982,7 +1412,12 @@ def draw_circle(data, me_user, scores, path, rings=3, show_names=True, width=120
     for orbit in radius:
         draw.ellipse((cx - orbit, cy - orbit, cx + orbit, cy + orbit),
                      outline=theme_colors["orbit"], width=2 * scale)
-    name_font = [font(max(12, int(size * 0.17))) for size in avatar_size]
+    name_faces = []
+    handle_faces = []
+    for size in avatar_size:
+        name_px = max(12, int(size * 0.17))
+        name_faces.append(LabelFace(name_px, bold=True))
+        handle_faces.append(LabelFace(max(11, int(name_px * 0.72)), bold=False))
     index = 0
     for ring_index in range(len(per_ring)):
         count = min(per_ring[ring_index], max(0, len(ranked) - index))
@@ -998,15 +1433,17 @@ def draw_circle(data, me_user, scores, path, rings=3, show_names=True, width=120
             ring_color = theme_colors["ring0"] if ring_index == 0 else theme_colors["ring"]
             pad = 3 * scale
             draw_house_frame(draw, x, y, size, ring_color, 2 * scale, pad)
-            avatar = fetch_avatar(data.users[uid], cache, size)
+            user = data.users[uid]
+            avatar = fetch_avatar(user, cache, size)
             canvas.alpha_composite(avatar, (int(x - size / 2), int(y - size / 2)))
             if show_names:
-                label = "@" + data.users[uid].get("username", "")
-                face = name_font[ring_index]
+                lines = picture_lines(user)
                 wedge = 2 * radius[ring_index] * math.sin(math.pi / max(count, 1))
                 limit = min(size * layout["name_width"][ring_index], wedge * 0.92)
-                draw_label(draw, label, face, x, y + size / 2 + pad + 4 * scale, limit,
-                           theme_colors["label_bg"], theme_colors["label"], scale)
+                draw_caption(
+                    draw, canvas, lines, name_faces[ring_index], handle_faces[ring_index],
+                    x, y + size / 2 + pad + 4 * scale, limit,
+                    theme_colors["label_bg"], theme_colors["label"], theme_colors["sub"], scale)
     centre = int(canvas_size * layout["centre"])
     draw_house_frame(draw, cx, cy, centre, theme_colors["ring0"], 5 * scale, 4 * scale, roof=0.2)
     canvas.alpha_composite(fetch_avatar(me_user, cache, centre), (cx - centre // 2, cy - centre // 2))
@@ -1102,6 +1539,11 @@ def ago(when, now):
     return f"{max(1, int(seconds // 86400))}d ago"
 
 
+def utc_now():
+    """Wall clock in UTC. Reply ages use this, not the report window end."""
+    return datetime.now(timezone.utc)
+
+
 def post_text(data, pid):
     text = snippet((data.posts.get(pid) or {}).get("text"))
     return text or "your post"
@@ -1186,22 +1628,29 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             "replied": post["id"] in data.owner_replied_to,
         })
 
+    owner_posts = data.owner_post_ids()
     for mention in data.mentions:
         author = mention.get("author_id")
-        refs = [ref.get("id") for ref in referenced(mention)
-                if ref.get("type") == "replied_to"]
-        quoted = [ref.get("id") for ref in referenced(mention)
-                  if ref.get("type") == "quoted"]
-        on_reply = next((ref for ref in refs if ref in data.posts), None)
-        on_quote = next((ref for ref in quoted if ref in data.posts), None)
-        is_reply = mention.get("in_reply_to_user_id") == data.me or on_reply is not None
-        if on_quote and not is_reply:
-            add_item("quote", mention, author, on_quote)
-        elif is_reply:
-            add_item("reply", mention, author, on_reply)
+        parent = next(iter(referenced_ids(mention, "replied_to")), None)
+        # Top-level only: the direct parent is one of the owner's original posts.
+        # A later reply in the thread, whose parent is the owner's own reply, does not count.
+        if parent and parent in data.owner_original_ids:
+            add_item("reply", mention, author, parent)
+            continue
+        if parent:
+            continue
+        quoted = next((pid for pid in referenced_ids(mention, "quoted") if pid in owner_posts), None)
+        if quoted:
+            add_item("quote", mention, author, quoted)
     for pid, quotes in data.quotes.items():
         for quote in quotes:
-            add_item("quote", quote, quote.get("author_id"), quote.get("_on_post") or pid)
+            parent = next(iter(referenced_ids(quote, "replied_to")), None)
+            if parent and parent not in data.owner_original_ids:
+                continue
+            if parent:
+                add_item("reply", quote, quote.get("author_id"), parent)
+            else:
+                add_item("quote", quote, quote.get("author_id"), quote.get("_on_post") or pid)
 
     likes_c, reposts_c = Counter(), Counter()
     reply_c, quote_c = Counter(), Counter()
@@ -1303,22 +1752,16 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         row["username"],
     ))
 
-    skipped_engaged = []
-
     def catch_person(uid, fallback=None):
         chosen = None
-        saw_engaged = False
         for post in data.originals.get(uid) or []:
             if not is_original_post(post):
                 continue
             if str(post["id"]) in data.engaged:
-                saw_engaged = True
                 continue
             chosen = post
             break
         if chosen is None:
-            if saw_engaged:
-                skipped_engaged.append(uid)
             return None
         return {
             **describe(uid, fallback),
@@ -1356,7 +1799,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         "ranked": ranked,
         "has_good_neighbours": bool(good),
         "catch_hint": not good,
-        "all_caught_up": not catch_up and bool(skipped_engaged),
+        "all_caught_up": not catch_up and bool(good),
         "owner_replied_in": getattr(data, "owner_replied_in", set()),
     }
 
@@ -1513,10 +1956,19 @@ def flower_record(row):
     }
 
 
-def catch_lines(person, now):
+def catch_lines(person, now=None):
+    """One What's new block.
+
+    `now` is the report window end passed as `--now`. Ages use utc_now()
+    so a stale window cannot show a week-old post as "8h ago". ago() itself
+    is unchanged.
+    """
+    del now
     latest = person.get("latest") or {}
     text = snippet(latest.get("text")) or "Post"
-    when = ago(ts(latest["created_at"]), now) if latest.get("created_at") else ""
+    when = ""
+    if latest.get("created_at"):
+        when = ago(ts(latest["created_at"]), utc_now())
     tail = f" · {when}" if when else ""
     return [
         hard_break(f"**{person['name']}**{person_marks(person)}"),
@@ -1527,7 +1979,6 @@ def catch_lines(person, now):
 
 def catch_record(person):
     latest = person.get("latest") or {}
-    created = latest.get("created_at")
     return {
         "name": person["name"],
         "username": person["username"],
@@ -1535,22 +1986,34 @@ def catch_record(person):
         "stranger": bool(person.get("stranger")),
         "text": snippet(latest.get("text")) or "Post",
         "url": person.get("latest_url") or "",
-        "created_at": iso_utc(created),
+        "created_at": iso_utc(latest.get("created_at")),
         "avatar": avatar_url(person),
     }
 
 
 def thread_key(item):
-    return item.get("conversation_id") or item.get("on_id") or item.get("id")
+    """Conversation for the waiting rule.
+
+    Items with no conversation id and no parent id are one thread. That is
+    how a flat per-person list decides from the latest message.
+    """
+    conv = item.get("conversation_id")
+    if conv:
+        return conv
+    on_id = item.get("on_id")
+    if on_id:
+        return on_id
+    return ""
 
 
 def greeting_rows(threads, waiting_rule=None, owner_replied_in=None):
-    """Waiting rows for replies.
+    """Waiting rows for first-level replies and quotes.
 
-    Default (`waiting_rule.per_person`): one row per person, waiting only if
-    their latest message has no owner reply. Pass a set of
+    The caller has already dropped nested replies. Default
+    (`waiting_rule.per_person`): one row per person, waiting only if their
+    latest message in that thread has no owner reply. Pass a set of
     `(conversation_id, user_id)` as the second argument to emit one row per
-    person per conversation (owner already replied in that thread).
+    person per conversation.
     """
     per_conversation = False
     if isinstance(waiting_rule, (set, frozenset)):
@@ -1639,10 +2102,14 @@ def greeting_status(row):
     return "Replied" if row.get("replied") else "Not replied yet"
 
 
-def greeting_lines(row, now):
+def greeting_lines(row, now=None):
+    # `now` is the report window end. Reply ages use the actual UTC clock so a
+    # stale --now cannot show a week-old post as minutes ago. What's new does
+    # the same from catch_lines.
+    del now
     when = ""
     if row.get("created_at"):
-        when = ago(ts(row["created_at"]), now)
+        when = ago(ts(row["created_at"]), utc_now())
     kind = "Quote" if row.get("kind") == "quote" else "Reply"
     name = f"**[{row['name']}](https://x.com/{row['username']})**{person_marks(row)}"
     text = row.get("text") or "Post"
@@ -1710,7 +2177,7 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
             lines.append("Add people to your good neighbours list to keep up with them here.")
         lines.append("")
         for person in catch[:show]:
-            lines.extend(catch_lines(person, now))
+            lines.extend(catch_lines(person))
         extra = len(catch) - show
         if extra > 0:
             lines.append(f"+{extra} more in What's new. Ask to see them.")
@@ -2021,8 +2488,8 @@ def render_report(activity, path, handle, since, now, label, top=10, thanks=None
             for row in lines:
                 _draw.text((margin + 48, text_y), row, font=body_font, fill=ink)
                 text_y += 22
-            if latest:
-                when = ago(ts(latest["created_at"]), now)
+            if latest and latest.get("created_at"):
+                when = ago(ts(latest["created_at"]), utc_now())
                 _draw.text((margin + 48, text_y), when + "   ·   Read post", font=small_font, fill=blue)
         add(block_h + 18, paint_catch)
 
@@ -2066,7 +2533,7 @@ def render_report(activity, path, handle, since, now, label, top=10, thanks=None
                 for row in on_lines:
                     _draw.text((margin + 78, text_y), row, font=small_font, fill=muted)
                     text_y += 20
-                meta = f"{ago(item['created_at'], now)}   ·   {state}"
+                meta = f"{ago(item['created_at'], utc_now())}   ·   {state}"
                 _draw.text((margin + 66, text_y), meta, font=small_font, fill=state_color)
             add(block_h, paint_item)
 
@@ -2165,6 +2632,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Build an X Neighbours report, and sometimes the neighbours picture."
     )
+    parser.add_argument("--version", action="version", version=xn_version.version())
     parser.add_argument("--config", default=os.path.join(here, "config.json"))
     parser.add_argument("--handle")
     parser.add_argument("--user-id", dest="user_id")

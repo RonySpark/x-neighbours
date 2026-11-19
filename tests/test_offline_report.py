@@ -205,6 +205,7 @@ class OfflineWeekReportTest(unittest.TestCase):
         self.assertNotIn("Second hello from the same person.", self.report)
         self.assertIn("Third hello from the same person.", self.report)
         self.assertNotIn("Latest note; owner already replied.", self.report)
+        self.assertIn("1 already answered.", self.report)
 
     def test_open_items_preserves_done_and_dropped(self):
         by_key = {(row["kind"], row["handle"]): row["status"] for row in self.open_items}

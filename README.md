@@ -1,6 +1,14 @@
 # X Neighbours
 
+[![Tests](https://github.com/RonySpark/x-neighbours/actions/workflows/tests.yml/badge.svg)](https://github.com/RonySpark/x-neighbours/actions/workflows/tests.yml)
+
 X Neighbours helps a creator catch up with the people who replied, quoted, liked, and reposted. The default result is a short chat report (markdown). A report-card PNG is optional (`--report-card`). A bot does the reading on X. The script only reads the saved JSON. It does not follow, like, post, or send messages.
+
+## Contributors
+
+A big thank you to everyone who has helped make X Neighbours better 💐 New neighbours are always welcome: share an idea, report a bug, or pick up an [issue](https://github.com/Skybatan/x-neighbours/issues) and open a pull request. The steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+- [RonySpark](https://github.com/RonySpark) ([@ronyspark](https://x.com/ronyspark)) — first contribution, [#19](https://github.com/Skybatan/x-neighbours/pull/19): the week-report crash fix on ISO timestamps, the one-row-per-person waiting list, `referenced_posts` support, the paging docs, and the offline tests.
 
 ![Sample report with fictional people](docs/sample-report.png)
 
@@ -8,11 +16,11 @@ X Neighbours helps a creator catch up with the people who replied, quoted, liked
 
 The first run covers the last two days, so it loads quickly. Every report includes the house-framed picture and a thank-you link. With only a few neighbours the picture uses one larger ring instead of an empty three-ring chart.
 
-![A first-run picture with five fictional neighbours](docs/sample-few-neighbours.png)
+![A first-run picture with fictional neighbours](docs/sample-few-neighbours.png)
 
-*Five made-up neighbours, one ring, house frames. From `examples/few`.*
+*Made-up neighbours, one ring, house frames. The display name sits under each avatar, with the @username below it. From `examples/few`.*
 
-People the owner does not follow are marked 👤?. There is no followed/unfollowed split. Catch up with your good neighbours lists each person's latest original post (not a reply or a plain repost; a quote of their own counts) that the owner has not already liked, replied to, reposted, or quoted. People with none left in the saved page are skipped. If everyone is already engaged, the section says you're all caught up. When the owner has a good neighbours list, that section shows only those people. When the list is empty, it stays the top people from the period and adds one hint line. A ⭐ marks a good neighbour in the other sections too. The ordering score stays in config and is not printed.
+People the owner does not follow are marked 👤?. There is no followed/unfollowed split. Catch up with your good neighbours lists each person's latest original post (not a reply or a plain repost; a quote of their own counts) that the owner has not already liked, replied to, reposted, or quoted. The age is that post's `created_at` against the current UTC time. People with none left in the saved page are skipped. If nothing is left to show, the section says you're all caught up. When the owner has a good neighbours list, that section shows only those people. When the list is empty, it stays the top people from the period and adds one hint line. A ⭐ marks a good neighbour in the other sections too. The ordering score stays in config and is not printed.
 
 The thank-you sentence is “My X neighbours circle, November 5!” plus a short thanks, using the report date in `timezone` (UTC if that key is blank). It does not mention any username.
 
@@ -20,7 +28,7 @@ Every report has four parts, written so a phone can read them without sideways s
 
 ![Sample neighbours picture with house frames, fictional data](docs/sample-neighbours.png)
 
-*Same fictional neighbourhood. Inner ring from the top, clockwise. Handles sit under the avatars.*
+*Same fictional neighbourhood. Inner ring from the top, clockwise. The display name sits under each avatar, with the @username on the line below.*
 
 ## Setup
 
@@ -50,7 +58,27 @@ python3 x_neighbours.py --now 2026-11-04T18:00:00Z
 | `x_neighbours_*.png` | The house-framed picture, included inside section 4 |
 | `open_items.csv` | Hand-off rows for another bot: `follow_back`, `first_reply`, `catch_up`, `thank_you`. Status stays `done`/`dropped` from the previous file when `kind`+`handle` match |
 
-A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same runbook is in [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md)). Any concern in chat can become a short GitHub issue: the bot drafts it and hands over a prefilled link, once per topic, and the owner submits it. The Monday report ends with one line inviting that. The draft leaves out handles, names, and post text.
+A Grok Bot that runs this for its owner should follow [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md). [BOT.md](BOT.md) only points at that file. Any concern in chat can become a short GitHub issue: the bot drafts it and hands over a prefilled link, once per topic, and the owner submits it. The Monday report ends with one line inviting that. The draft leaves out handles, names, and post text. A contributor's bot that changes this repo follows [skills/x-neighbours-maintain/SKILL.md](skills/x-neighbours-maintain/SKILL.md).
+
+## Version
+
+The version number is the single line in [`VERSION`](VERSION). `version.py` reads that file. This README does not copy the number.
+
+```bash
+python3 version.py
+python3 x_neighbours.py --version
+```
+
+What changed is in [CHANGELOG.md](CHANGELOG.md).
+
+## Upgrading an installed bot
+
+The clone and `config.json` stay where they are. The good neighbours list and the report clock stay in the bot store.
+
+1. From the clone, run `python3 version.py` and keep the line.
+2. `git pull --ff-only`. When `requirements.txt` changed, run `python3 -m pip install -r requirements.txt`. Leave `config.json` and `data/` uncommitted.
+3. Run `python3 version.py` again. When the line changed, read [CHANGELOG.md](CHANGELOG.md).
+4. Leave `good_neighbours.json` and `state.json` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
 
 ## Config
 
@@ -96,7 +124,7 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |
 | `first_run_days` | How many days the first fetch covers. Default 2. Daily stays 24 hours. Monday stays 7 days |
 | `items_per_user` | Reply and quote lines shown per person before `+N more`. Default 3 |
-| `show_names` | Handles under the avatars on the picture |
+| `show_names` | Display name under each avatar, with @username on the line below. @username alone when the account has no name |
 | `theme` | `midnight` (default), `light`, or `sunset` |
 | `windows` | `week` by default. `day` is the daily report |
 | `top` | How many people are ranked for Flowers and for Catch up when the good neighbours list is empty. The chat still shows five at a time. Default 10 |
@@ -108,7 +136,7 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `report` | `both` (default), `likes`, or `replies` |
 | `per_post`, `per_day` | Extra markdown sections. Off unless you ask |
 
-Other flags: `--config`, `--data`, `--snapshot-dir PATH`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`.
+Other flags: `--config`, `--data`, `--snapshot-dir PATH`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`, `--version`.
 
 `--snapshot-dir` is the source of truth for followers and following. Example: `--snapshot-dir /workspace/content/followers`. It picks the newest `YYYY-MM-DD.json` (a JSON list of users) and, when that file exists, `following/YYYY-MM-DD.json` (an id-to-user dict). Both are converted into the same `{data: [...]}` shape as `followers_*.json`. If `following/` is missing for that date, following stays empty. 👤? and mutuals then behave as they do with no `following_*.json`, and the report says so. Snapshot age uses the same "Followers (list from 16 Nov)" line as content analytics, including the stale warning after 7 days. `counts.csv` in that folder (columns `date`, `followers_total`, `followers_verified`, `following_total`, `mutuals`, one row per day) adds a following vs followers trend: latest values, 7-day and 30-day change, and the follower/following ratio. A missing `counts.csv` skips that section with one line. Do not call `get_users_me_followers` or `get_users_me_following`. When `--snapshot-dir` is absent, the script falls back to saved `followers_*.json` and `following_*.json`.
 
@@ -135,25 +163,25 @@ python3 save_raw.py <tool-result-file> <name>
 
 `save_raw.py` accepts raw JSON or text that wraps one JSON object, and writes `data/<name>.json`. You can also write that file yourself if you already have the object.
 
-Pick a UTC timestamp `T` when you start. Pass `T` to the script as `--now`. For a week (or for both windows), `start_time` is `T` minus 7 days, for example `T` = `2026-11-04T18:00:00Z` and `start_time` = `2026-10-28T18:00:00Z`. For a day-only run, `start_time` is `T` minus 24 hours. One fetch feeds every window you render: the script cuts the 24-hour window out of the same files.
+Pick a UTC timestamp `T` when you start: the actual current UTC time, not a leftover from an earlier run. Pass `T` to the script as `--now`. What's new ages posts from each `created_at` against the clock at render time, not from `--now`. For a week (or for both windows), `start_time` is `T` minus 7 days, for example `T` = `2026-11-04T18:00:00Z` and `start_time` = `2026-10-28T18:00:00Z`. For a day-only run, `start_time` is `T` minus 24 hours. One fetch feeds every window you render: the script cuts the 24-hour window out of the same files.
 
-Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_tweets`. The loader prefers `referenced_tweets` and falls back to `referenced_posts`.
+Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_tweets`. The loader prefers `referenced_tweets` and falls back to `referenced_posts`. Save `includes` too.
 
-`{ID}` is your user id. Page with `pagination_token` set to the previous `meta.next_token`. Keep paging while `next_token` is present. Some tools cap a page at 25 even when `max_results` is 100. Stop only when there is no next token.
+`{ID}` is your user id. Always pass `max_results` 100 for posts, mentions, and likers; do not omit it (the tool then pages at 25). Page with `pagination_token` set to the previous `meta.next_token`. Keep paging while `next_token` is present. Some tools cap a page at 25 even when `max_results` is 100. A short page is not the end of the list. For mentions, keep calling until there is no `next_token`.
 
 | # | Tool | Arguments | Save as |
 |---|---|---|---|
-| 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets`, `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
-| 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url` | `mentions_1`, … |
+| 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets` (do not exclude replies), `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
+| 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, `user.fields=username,name,description,profile_image_url`. Save `includes` too | `mentions_1`, … |
 | 3 | `get_posts_liking_users` | Posts with likes. `user.fields=username,name,description,profile_image_url` | `likes_<postid>` |
 | 4 | `get_posts_reposted_by` | Posts with reposts. Same user fields | `reposts_<postid>` |
-| 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_posts`, `expansions=author_id` | `quotes_<postid>` |
-| 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_posts,conversation_id`, saved as `my_posts_1`. A failed call is skipped | `my_likes_1`, `my_posts_1` |
-| 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=10`, `exclude=replies,retweets`, `post.fields=created_at,text,author_id,in_reply_to_user_id,referenced_posts` | `latest_<userid>` |
+| 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_tweets`, `expansions=author_id` | `quotes_<postid>` |
+| 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, saved as `my_posts_1`. A failed call is skipped. Those replies are how Replies marks a mention answered | `my_likes_1`, `my_posts_1` |
+| 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=100`, `exclude` `replies` and `retweets`, `post.fields=created_at,text,conversation_id`, `expansions=author_id,in_reply_to_user_id,referenced_posts`. One more page as `latest_<userid>_p2` if the first page is all engaged | `latest_<userid>` |
 
 Followers and following are not in that table. Pass `--snapshot-dir /workspace/content/followers` (or set `snapshot_dir`). Do not call `get_users_me_followers` or `get_users_me_following`.
 
-On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on the built-in public X tools. Likers, liked posts, and bookmarks are on the owner's X plugin. A reply counts when `in_reply_to_user_id` is `{ID}`, or when a `replied_to` reference points at one of your posts. The owner has replied to that item when one of their own posts replies to its id. Your own posts are ignored as neighbours.
+On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on the built-in public X tools. Likers, liked posts, and bookmarks are on the owner's X plugin. A reply counts only when its direct `replied_to` parent is one of your original posts, not one of your replies. A quote of your post still counts. You have answered a reply when one of your own replies points `replied_to` at that reply's id. Your own posts are ignored as neighbours. Waiting is still one row per person, and only when their latest first-level message in that thread has no reply from you.
 
 ### Keeping the read count down
 
@@ -164,11 +192,11 @@ Likes, reposts, and quotes are one call per post:
 - The last 24 hours: every post with that count above 0.
 - Days 2–7, when a daily run already covered day 1: only counts of 3 or more.
 - Weekly-only (no daily run that week): every post with that count above 0. Do not use the 3-or-more skip.
-- Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty.
+- Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty. If that page is already all engaged, fetch one more page.
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.
 - Keep paging while `next_token` is present and you are inside the day's budget. A 25-item page is not complete if a next token remains.
 
-Follower and following lists come from `--snapshot-dir`. The Monday run reuses that morning's daily files and only fetches the earlier part of the week, including likes, reposts, and quotes. The two runs share the 1,000-read cap. The steps are in [BOT.md](BOT.md).
+Follower and following lists come from `--snapshot-dir`. The Monday run reuses that morning's daily files and only fetches the earlier part of the week, including likes, reposts, and quotes. The two runs share the 1,000-read cap. The steps are in [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md).
 
 ## Try the sample
 
@@ -223,6 +251,8 @@ python3 -m unittest discover -s tests -v
 
 `tests/test_offline_report.py` runs a week report end to end and checks that every output file is written (markdown, picture, `more.json`, thanks, `state.json`, `open_items.csv`) and that waiting replies are counted once per person. `tests/test_chat_format.py` checks the chat layout against `examples/few`. Content analytics uses fictional CSVs under `tests/fixtures/analytics/`. Echo snapshot loading uses fictional files under `tests/fixtures/snapshot/`.
 
+GitHub Actions runs `python3 -m unittest discover -s tests -v` and an offline report (the bundled fixtures under `tests/fixtures/offline` and the samples under `examples/`) on every pull request and on pushes to `main`. The job installs `requirements.txt`, including pandas. It does not call X and does not use secrets.
+
 ## Content analytics
 
 A separate read-only script turns X Analytics CSV exports into a short Sunday paste-in. It does not call X. Put `content_*.csv` and `overview_*.csv` in a folder:
@@ -244,20 +274,27 @@ That writes `what_worked_week.md` and, with `--json`, `what_worked_week.json`. O
 
 | Path | Role |
 |---|---|
-| `x_neighbours.py` | Reports and pictures |
+| `x_neighbours.py` | Reports and pictures. `--version` prints the line in `VERSION` |
 | `followers_welcome.py` | New verified followers to welcome; `engaged_first` is yes if they engaged in the saved `--data` at all |
 | `content_analytics.py` | Weekly “What worked” section from Analytics CSVs |
+| `VERSION` | The only copy of the version number |
+| `version.py` | Read that number. Code calls `version.version()` |
+| `CHANGELOG.md` | What changed, for anyone upgrading |
 | `good_neighbours.py` | Add, remove, or list the personal good neighbours file |
 | `report_state.py` | Read or update the freshness clock in the bot store |
 | `feedback_link.py` | Build a prefilled GitHub issue link. It does not post the issue |
 | `.github/ISSUE_TEMPLATE/feedback.md` | Issue template labelled `feedback` |
+| `CONTRIBUTING.md` | Shared process for issues and pull requests |
+| `.github/pull_request_template.md` | Checklist on every pull request |
 | `save_raw.py` | Store one tool result under `data/` |
 | `config.example.json` | Config template |
-| `BOT.md`, `skills/x-neighbours/SKILL.md` | Runbook for the bot |
+| `skills/x-neighbours/SKILL.md` | Runbook for the bot |
+| `BOT.md` | Pointer to that runbook |
+| `skills/x-neighbours-maintain/SKILL.md` | How a contributor's bot changes this repo |
 | `examples/sample/` | Fictional data and generated avatars |
 | `docs/sample-report.png` | Sample report picture, fictional people |
 | `docs/sample-report.html` | HTML source for that picture |
-| `docs/sample-few-neighbours.png` | First-run picture with five fictional neighbours |
+| `docs/sample-few-neighbours.png` | First-run picture with fictional neighbours |
 | `docs/sample-neighbours.png` | A full three-ring picture from `examples/sample` |
 | `examples/few/` | The short fictional dataset |
 | `examples/few/good_neighbours.json` | Fictional good neighbours list |

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Loader accepts referenced_posts as well as referenced_tweets."""
+"""Loader prefers referenced_tweets and falls back to referenced_posts."""
 import json
 import os
+import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import x_neighbours as xn
 
 
@@ -17,8 +19,13 @@ class ReferencedPostsTest(unittest.TestCase):
     def test_referenced_reads_either_field(self):
         post = {"referenced_posts": [{"type": "replied_to", "id": 11}]}
         old = {"referenced_tweets": [{"type": "quoted", "id": 12}]}
+        both = {
+            "referenced_tweets": [{"type": "replied_to", "id": "1"}],
+            "referenced_posts": [{"type": "quoted", "id": "2"}],
+        }
         self.assertEqual(xn.referenced(post)[0]["id"], "11")
         self.assertEqual(xn.referenced(old)[0]["id"], "12")
+        self.assertEqual(xn.referenced(both)[0]["id"], "1")
         self.assertEqual(xn.referenced({}), [])
 
     def test_loader_counts_replies_from_referenced_posts(self):

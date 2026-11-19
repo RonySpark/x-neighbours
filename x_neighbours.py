@@ -16,7 +16,8 @@ It reads raw JSON saved from X tool calls (see README.md) in the data folder:
   Followers and following come from Echo's daily snapshot (--snapshot-dir /
   config snapshot_dir). Newest YYYY-MM-DD.json is a JSON list of follower
   user objects. following/YYYY-MM-DD.json is an id-to-user dict. Missing
-  following/ for that date leaves following empty.
+  following/ for that date leaves following empty. counts.csv is daily
+  totals; a missing file skips the trend section with one line.
 
   When --snapshot-dir is absent, the offline fallback is:
   followers_*.json     saved follower pages
@@ -72,6 +73,14 @@ def load_soft(pattern):
 
 DATE_JSON = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
 SNAPSHOT_STALE_DAYS = 7
+COUNT_METRICS = (
+    ("followers_total", "followers"),
+    ("followers_verified", "verified"),
+    ("following_total", "following"),
+    ("mutuals", "mutuals"),
+)
+COUNT_FIELDS = tuple(key for key, _label in COUNT_METRICS)
+COUNT_WINDOWS = (7, 30)
 
 
 def as_idset_doc(payload):
@@ -139,6 +148,90 @@ def snapshot_age_line(snapshot_date, now, following_missing=False):
             "👤? and mutuals treat following as empty"
         )
     return line
+
+
+def load_counts_csv(path):
+    """Parse snapshot counts.csv. Missing or unreadable returns None."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, newline="", encoding="utf-8") as fh:
+            rows = []
+            for raw in csv.DictReader(fh):
+                row = _parse_count_row(raw)
+                if row:
+                    rows.append(row)
+    except (OSError, csv.Error, UnicodeDecodeError):
+        return None
+    rows.sort(key=lambda row: row["date"])
+    return rows
+
+
+def _parse_count_row(raw):
+    try:
+        day = date.fromisoformat((raw.get("date") or "").strip())
+        nums = {key: int(str(raw.get(key, "")).strip()) for key in COUNT_FIELDS}
+    except (TypeError, ValueError, AttributeError):
+        return None
+    nums["date"] = day
+    return nums
+
+
+def _follow_ratio(row):
+    following = row["following_total"]
+    if following <= 0:
+        return None
+    return row["followers_total"] / following
+
+
+def _fmt_ratio(value):
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}"
+
+
+def _fmt_delta(n):
+    n = int(n or 0)
+    if n > 0:
+        return f"+{fmt_num(n)}"
+    if n < 0:
+        return f"-{fmt_num(-n)}"
+    return "0"
+
+
+def counts_section_lines(rows):
+    """Plain-text following vs followers trend. None or empty is one skip line."""
+    if not rows:
+        return ["No counts.csv in the snapshot folder."]
+    latest = rows[-1]
+    stamp = f"{latest['date'].day} {latest['date'].strftime('%b')}"
+    now_bits = [
+        f"{fmt_num(latest['followers_total'])} followers",
+        f"{fmt_num(latest['followers_verified'])} verified",
+        f"{fmt_num(latest['following_total'])} following",
+        counted(latest["mutuals"], "mutual", "mutuals"),
+    ]
+    lines = [
+        "### Following vs followers",
+        "",
+        f"Now ({stamp}): " + " · ".join(now_bits),
+    ]
+    now_ratio = _follow_ratio(latest)
+    for days in COUNT_WINDOWS:
+        if len(rows) < days + 1:
+            lines.append(f"{days} days: not enough history")
+            continue
+        then = rows[-(days + 1)]
+        bits = [
+            f"{label} {_fmt_delta(latest[key] - then[key])}"
+            for key, label in COUNT_METRICS
+        ]
+        then_ratio = _follow_ratio(then)
+        lines.append(
+            f"{days} days: " + " · ".join(bits)
+            + f". Ratio {_fmt_ratio(now_ratio)} now vs {_fmt_ratio(then_ratio)} then"
+        )
+    return lines
 
 
 def ts(s):
@@ -1554,7 +1647,8 @@ def public_greeting(row, now):
 
 
 def write_chat_report(activity, path, handle, since, now, label, top=10, items_per_user=3,
-                      show=CHAT_SHOW, window="day", waiting_rule=None, snapshot_line=None):
+                      show=CHAT_SHOW, window="day", waiting_rule=None, snapshot_line=None,
+                      counts_lines=None):
     totals = activity["totals"]
     people = activity["threads"] + activity["interactions"] + activity["catch_up"]
     legend = []
@@ -1622,6 +1716,10 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
         if answered:
             lines.append(f"{len(answered)} already answered. Ask to see them.")
             lines.append("")
+    if counts_lines:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.extend(counts_lines)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines).rstrip() + "\n")
     return {
@@ -2220,14 +2318,19 @@ def main():
         thanks_path = os.path.join(args.out, f"report_{key}_thanks.md")
         more_path = os.path.join(args.out, f"report_{key}_more.json")
         snapshot_line = None
+        counts_lines = None
         if data.snapshot_date:
             snapshot_line = snapshot_age_line(
                 data.snapshot_date, now,
                 following_missing=data.snapshot_following_missing)
+        if snapshot_dir:
+            counts_lines = counts_section_lines(
+                load_counts_csv(os.path.join(snapshot_dir, "counts.csv")))
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),
-            window=key, waiting_rule=waiting_rule, snapshot_line=snapshot_line)
+            window=key, waiting_rule=waiting_rule, snapshot_line=snapshot_line,
+            counts_lines=counts_lines)
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")

@@ -33,6 +33,11 @@ def snapshots(folder):
     return rows
 
 
+def ids_gone(before, after):
+    """Ids present in before and absent from after. Maps or sets both work."""
+    return set(before) - set(after)
+
+
 def engager_ids(data_dir):
     """Liker, replier, reposter, and quoter ids from x_neighbours.Data."""
     data = xn.Data(data_dir, "0")

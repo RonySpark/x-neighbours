@@ -2139,9 +2139,51 @@ def public_greeting(row, now):
     return data
 
 
+def unfollow_zone(name):
+    text = (name or "").strip() or "Australia/Adelaide"
+    return owner_zone(text)
+
+
+def snapshot_local_date(day_str, zone):
+    day = date.fromisoformat(day_str)
+    return datetime(day.year, day.month, day.day, 12, tzinfo=zone).date()
+
+
+def unfollow_lines(snapshot_dir, zone_name, since, now):
+    """Who left between follower snapshots, grouped by the later file's local date."""
+    if not snapshot_dir:
+        return None
+    zone = unfollow_zone(zone_name)
+    import followers_welcome as fw
+    snaps = sorted(fw.snapshots(snapshot_dir), key=lambda pair: pair[0])
+    start = since.astimezone(zone).date()
+    end = now.astimezone(zone).date()
+    grouped = {}
+    for (_day, users), (nxt_day, nxt) in zip(snaps, snaps[1:]):
+        local = snapshot_local_date(nxt_day, zone)
+        if local < start or local > end:
+            continue
+        names = []
+        for uid in fw.ids_gone(users, nxt):
+            handle = str((users.get(uid) or {}).get("username") or "").lstrip("@")
+            if handle:
+                names.append(handle)
+        if names:
+            grouped.setdefault(local, []).extend(names)
+    label = getattr(zone, "key", None) or "Australia/Adelaide"
+    lines = [f"### Unfollows ({label})", ""]
+    if not grouped:
+        lines.append("No unfollows in this stretch.")
+        return lines
+    for day in sorted(grouped):
+        shown = ", ".join(f"@{name}" for name in sorted(set(grouped[day]), key=str.lower))
+        lines.append(f"{day.day} {day.strftime('%b')}: {shown}")
+    return lines
+
+
 def write_chat_report(activity, path, handle, since, now, label, top=10, items_per_user=3,
                       show=CHAT_SHOW, window="day", waiting_rule=None, snapshot_line=None,
-                      counts_lines=None):
+                      counts_lines=None, gone_lines=None):
     totals = activity["totals"]
     people = activity["threads"] + activity["interactions"] + activity["catch_up"]
     legend = []
@@ -2213,6 +2255,10 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
         if lines and lines[-1] != "":
             lines.append("")
         lines.extend(counts_lines)
+    if gone_lines:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.extend(gone_lines)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines).rstrip() + "\n")
     return {
@@ -2809,14 +2855,16 @@ def main():
             snapshot_line = snapshot_age_line(
                 data.snapshot_date, now,
                 following_missing=data.snapshot_following_missing)
+        gone_lines = None
         if snapshot_dir:
             counts_lines = counts_section_lines(
                 load_counts_csv(os.path.join(snapshot_dir, "counts.csv")))
+            gone_lines = unfollow_lines(snapshot_dir, cfg.get("timezone"), since, now)
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),
             window=key, waiting_rule=waiting_rule, snapshot_line=snapshot_line,
-            counts_lines=counts_lines)
+            counts_lines=counts_lines, gone_lines=gone_lines)
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")

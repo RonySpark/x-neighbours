@@ -858,7 +858,7 @@ def unfollow_days(posts, snapshot_dir):
             continue
         baseline, plus1, plus2 = window
         still = set(index[baseline]) & set(index[plus1])
-        gone = still - set(index[plus2])
+        gone = fw.ids_gone(still, index[plus2])
         names = []
         for uid in gone:
             user = index[plus1].get(uid) or index[baseline].get(uid) or {}

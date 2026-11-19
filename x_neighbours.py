@@ -590,6 +590,32 @@ def optional_weight(value, fallback):
     return whole_number(value)
 
 
+def has_weight(cfg, key):
+    return key in cfg and cfg.get(key) not in (None, "")
+
+
+DEPRECATED_WEIGHTS = (
+    ("mutual_bonus", "mutual_reply_bonus"),
+    ("new_follower_credit", "new_follower_bonus"),
+)
+
+
+def aliased_weight(cfg, kept, old, fallback):
+    if has_weight(cfg, old):
+        print(f"{old} is deprecated; use {kept}.", file=sys.stderr)
+        if not has_weight(cfg, kept):
+            return optional_weight(cfg.get(old), fallback)
+    return optional_weight(cfg.get(kept), fallback)
+
+
+def apply_loaded_config(cfg, loaded):
+    for kept, old in DEPRECATED_WEIGHTS:
+        if has_weight(loaded, old) and not has_weight(loaded, kept):
+            cfg.pop(kept, None)
+    cfg.update(loaded)
+    return cfg
+
+
 def resolve_weights(cfg):
     like_weight = whole_number(cfg.get("like_weight", 1))
     reply_weight = whole_number(cfg.get("reply_weight", 3))
@@ -598,8 +624,9 @@ def resolve_weights(cfg):
         "reply_weight": reply_weight,
         "repost_weight": optional_weight(cfg.get("repost_weight"), like_weight),
         "quote_weight": optional_weight(cfg.get("quote_weight"), reply_weight),
-        "mutual_bonus": optional_weight(cfg.get("mutual_bonus"), 0),
-        "new_follower_credit": optional_weight(cfg.get("new_follower_credit"), 0),
+        "mutual_bonus": aliased_weight(cfg, "mutual_bonus", "mutual_reply_bonus", 0),
+        "new_follower_credit": aliased_weight(
+            cfg, "new_follower_credit", "new_follower_bonus", 0),
     }
 
 
@@ -2082,7 +2109,7 @@ def main():
             loaded = json.load(fh)
         if not isinstance(loaded, dict):
             parser.error(f"{args.config} must contain a JSON object")
-        cfg.update(loaded)
+        apply_loaded_config(cfg, loaded)
     for key in DEFAULTS:
         value = getattr(args, key, None)
         if value is not None:

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Quiet relationship credits apply once, and old bonus keys are ignored."""
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 
 import x_neighbours as xn
 
@@ -95,17 +96,43 @@ class ScoringTest(unittest.TestCase):
         self.assertNotIn("mutual_reply_bonus", cfg)
         self.assertNotIn("new_follower_bonus", cfg)
 
-    def test_old_bonus_keys_are_ignored(self):
-        cfg = xn.resolve_weights({
-            "mutual_bonus": 2,
-            "new_follower_credit": 1,
-            "mutual_reply_bonus": 99,
-            "new_follower_bonus": 99,
-        })
+    def test_old_only_keys_map_to_kept(self):
+        with redirect_stderr(io.StringIO()) as err:
+            cfg = xn.resolve_weights({
+                "mutual_reply_bonus": 2,
+                "new_follower_bonus": 3,
+            })
         self.assertEqual(cfg["mutual_bonus"], 2)
-        self.assertEqual(cfg["new_follower_credit"], 1)
-        self.assertNotIn("mutual_reply_bonus", cfg)
-        self.assertNotIn("new_follower_bonus", cfg)
+        self.assertEqual(cfg["new_follower_credit"], 3)
+        text = err.getvalue()
+        self.assertIn("mutual_reply_bonus", text)
+        self.assertIn("mutual_bonus", text)
+        self.assertIn("new_follower_bonus", text)
+        self.assertIn("new_follower_credit", text)
+
+    def test_kept_key_wins_when_both_set(self):
+        with redirect_stderr(io.StringIO()) as err:
+            cfg = xn.resolve_weights({
+                "mutual_bonus": 5,
+                "new_follower_credit": 4,
+                "mutual_reply_bonus": 99,
+                "new_follower_bonus": 99,
+            })
+        self.assertEqual(cfg["mutual_bonus"], 5)
+        self.assertEqual(cfg["new_follower_credit"], 4)
+        text = err.getvalue()
+        self.assertIn("mutual_reply_bonus", text)
+        self.assertIn("mutual_bonus", text)
+        self.assertIn("new_follower_bonus", text)
+        self.assertIn("new_follower_credit", text)
+
+    def test_defaults_do_not_hide_old_only_file_keys(self):
+        loaded = {"mutual_reply_bonus": 2, "new_follower_bonus": 3}
+        merged = xn.apply_loaded_config(dict(xn.DEFAULTS), loaded)
+        with redirect_stderr(io.StringIO()):
+            cfg = xn.resolve_weights(merged)
+        self.assertEqual(cfg["mutual_bonus"], 2)
+        self.assertEqual(cfg["new_follower_credit"], 3)
 
     def test_explicit_repost_and_quote_weights(self):
         ranked = self.ranked(repost_weight=4, quote_weight=7)

@@ -763,5 +763,21 @@ class FunnelVisitRateTest(unittest.TestCase):
         self.assertIn("5.0% of impressions visited the profile", funnel_line)
 
 
+class ContentOnlyImpressionsTest(unittest.TestCase):
+    def test_content_only_impressions_are_not_a_fake_zero(self):
+        """Synthetic only. A content export with no overview must not print Impressions 0."""
+        folder = tempfile.mkdtemp(prefix="xn-content-only-")
+        _write_csv(
+            folder, "content_7d.csv", CONTENT_HEADER,
+            [_content_row(OVERLAP_ID, "only content", 400, 3)],
+            1_700_000_100,
+        )
+        report = ca.analyze(folder)
+        self.assertEqual(report["scorecard"]["totals"]["impressions"]["this"], 400)
+        text = ca.render_markdown(report)
+        self.assertIn("Impressions 400", text)
+        self.assertNotIn("Impressions 0", text)
+
+
 if __name__ == "__main__":
     unittest.main()

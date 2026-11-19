@@ -270,8 +270,12 @@ def scorecard(overview, content):
         "new_follows", "unfollows", "replies", "reposts", "profile_visits",
         "create_post", "video_views", "media_views",
     ]
-    this_tot = sum_counts(this_days, overview_keys)
-    prev_tot = sum_counts(prev_days, overview_keys)
+    if overview is None or overview.empty:
+        this_tot = sum_counts(this_posts, overview_keys)
+        prev_tot = sum_counts(prev_posts, overview_keys)
+    else:
+        this_tot = sum_counts(this_days, overview_keys)
+        prev_tot = sum_counts(prev_days, overview_keys)
     totals = {key: change(this_tot[key], prev_tot[key]) for key in overview_keys}
     content_keys = ["detail_expands", "url_clicks", "hashtag_clicks", "permalink_clicks"]
     this_extra = sum_counts(this_posts, content_keys)

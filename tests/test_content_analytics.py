@@ -731,5 +731,37 @@ class BlankPostIdTest(unittest.TestCase):
         self.assertEqual(ca.snowflake_utc(posts.iloc[0]["post_id"]).tzinfo, timezone.utc)
 
 
+def _funnel_posts(impressions, expands, visits, follows):
+    """One fictional post. Profile visits can exceed detail expands."""
+    return pd.DataFrame([{
+        "post_id": "10",
+        "text": "synthetic funnel post",
+        "impressions": impressions,
+        "engagements": 1,
+        "engagement_rate": 0.001,
+        "detail_expands": expands,
+        "profile_visits": visits,
+        "new_follows": follows,
+        "link": "",
+        "posted_at": datetime(2026, 11, 16, tzinfo=timezone.utc),
+    }])
+
+
+class FunnelVisitRateTest(unittest.TestCase):
+    def test_visit_rate_uses_impressions_when_visits_exceed_expands(self):
+        """Synthetic only. Visits and expands are not nested; do not report 500%."""
+        posts = _funnel_posts(impressions=1000, expands=10, visits=50, follows=5)
+        stats = ca.funnel_stats(posts)
+        self.assertLessEqual(stats["visit_rate"], 1)
+        self.assertAlmostEqual(stats["visit_rate"], 50 / 1000)
+        self.assertNotAlmostEqual(stats["visit_rate"], 1.0)
+        report = _times_report({"dropped": 0, "by_type": []})
+        report["funnel"] = {"overall": stats}
+        text = ca.render_markdown(report)
+        self.assertNotIn("500%", text)
+        funnel_line = [line for line in text.splitlines() if line.startswith("Funnel:")][0]
+        self.assertIn("5.0% of impressions visited the profile", funnel_line)
+
+
 if __name__ == "__main__":
     unittest.main()

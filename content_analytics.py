@@ -561,13 +561,13 @@ def funnel_stats(posts):
         "profile_visits": visits,
         "new_follows": follows,
         "expand_rate": ratio(expands, impressions),
-        "visit_rate": ratio(visits, expands),
+        "visit_rate": ratio(visits, impressions),
         "follow_rate": ratio(follows, visits),
     }
 
 
 def funnel(posts, keywords=None):
-    """Impressions → detail expands → profile visits → new follows."""
+    """Impressions → detail expands and profile visits; follows from visits."""
     keywords = keywords or DEFAULT_KEYWORDS
     if posts is None or posts.empty:
         return {"overall": funnel_stats(posts), "by_type": [], "top_follows": []}
@@ -1008,7 +1008,7 @@ def render_markdown(report):
     overall = funnel_data["overall"]
     lines.append(
         f"Funnel: {fmt_rate(overall['expand_rate'])} of impressions opened the post, "
-        f"{fmt_rate(overall['visit_rate'])} of those visited the profile, "
+        f"{fmt_rate(overall['visit_rate'])} of impressions visited the profile, "
         f"{fmt_rate(overall['follow_rate'])} of visits followed."
     )
     streak = cons["streak"]

@@ -89,8 +89,6 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `user_id` | Your numeric X user id, stored as a string |
 | `like_weight`, `reply_weight` | Quiet points. A reply uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
 | `repost_weight`, `quote_weight` | Optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight` |
-| `mutual_reply_bonus` | Optional, default 0. Extra points for a reply on the owner's original post (not a reply or a repost) by a mutual follow |
-| `new_follower_bonus` | Optional, default 0. Extra points once for someone who follows the owner and is not followed back |
 | `mutual_bonus` | Extra quiet points when you follow each other. Default 2. Not printed |
 | `new_follower_credit` | Extra quiet points when they follow you and you do not follow them. Default 1. Not printed |
 | `waiting_rule` | Replies waiting count. `per_person` (default true) counts each person once. `latest_unreplied` (default true) counts them only if their latest message in that thread has no reply from the owner |
@@ -110,7 +108,7 @@ A Grok Bot that runs this for its owner should follow [BOT.md](BOT.md) (the same
 | `report` | `both` (default), `likes`, or `replies` |
 | `per_post`, `per_day` | Extra markdown sections. Off unless you ask |
 
-Other flags: `--config`, `--data`, `--snapshot-dir PATH`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`, `--mutual-reply-bonus`, `--new-follower-bonus`.
+Other flags: `--config`, `--data`, `--snapshot-dir PATH`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--repost-weight`, `--quote-weight`.
 
 `--snapshot-dir` is the source of truth for followers and following. Example: `--snapshot-dir /workspace/content/followers`. It picks the newest `YYYY-MM-DD.json` (a JSON list of users) and, when that file exists, `following/YYYY-MM-DD.json` (an id-to-user dict). Both are converted into the same `{data: [...]}` shape as `followers_*.json`. If `following/` is missing for that date, following stays empty. 👤? and mutuals then behave as they do with no `following_*.json`, and the report says so. Snapshot age uses the same "Followers (list from 16 Nov)" line as content analytics, including the stale warning after 7 days. Do not call `get_users_me_followers` or `get_users_me_following`. When `--snapshot-dir` is absent, the script falls back to saved `followers_*.json` and `following_*.json`.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional scoring weights keep the old defaults and can boost mutuals."""
+"""Quiet relationship credits apply once, and old bonus keys are ignored."""
 import json
 import os
 import tempfile
@@ -90,8 +90,22 @@ class ScoringTest(unittest.TestCase):
         cfg = xn.resolve_weights({"like_weight": 2, "reply_weight": 5})
         self.assertEqual(cfg["repost_weight"], 2)
         self.assertEqual(cfg["quote_weight"], 5)
-        self.assertEqual(cfg["mutual_reply_bonus"], 0)
-        self.assertEqual(cfg["new_follower_bonus"], 0)
+        self.assertEqual(cfg["mutual_bonus"], 0)
+        self.assertEqual(cfg["new_follower_credit"], 0)
+        self.assertNotIn("mutual_reply_bonus", cfg)
+        self.assertNotIn("new_follower_bonus", cfg)
+
+    def test_old_bonus_keys_are_ignored(self):
+        cfg = xn.resolve_weights({
+            "mutual_bonus": 2,
+            "new_follower_credit": 1,
+            "mutual_reply_bonus": 99,
+            "new_follower_bonus": 99,
+        })
+        self.assertEqual(cfg["mutual_bonus"], 2)
+        self.assertEqual(cfg["new_follower_credit"], 1)
+        self.assertNotIn("mutual_reply_bonus", cfg)
+        self.assertNotIn("new_follower_bonus", cfg)
 
     def test_explicit_repost_and_quote_weights(self):
         ranked = self.ranked(repost_weight=4, quote_weight=7)
@@ -99,17 +113,25 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(ranked["u2"], 15)
         self.assertEqual(ranked["u1"], 7)
 
-    def test_mutual_reply_bonus_only_on_original_posts(self):
-        ranked = self.ranked(mutual_reply_bonus=10)
-        # u1: old 7 + 1 original-post reply * 10 (the reply to post 9 is not original)
+    def test_mutual_bonus_once_even_with_two_replies(self):
+        ranked = self.ranked(mutual_bonus=10)
+        # u1: old 7 + 10 once (two replies do not double it)
         self.assertEqual(ranked["u1"], 17)
-        # u2 is follows-you, not mutual, so no mutual bonus. still 8
+        # u2 is follows-you, not mutual
         self.assertEqual(ranked["u2"], 8)
 
-    def test_new_follower_bonus_once_for_follows_you(self):
-        ranked = self.ranked(new_follower_bonus=5)
+    def test_new_follower_credit_once_for_follows_you(self):
+        ranked = self.ranked(new_follower_credit=5)
         self.assertEqual(ranked["u1"], 7)
         self.assertEqual(ranked["u2"], 13)
+
+    def test_mutual_new_follower_credited_once(self):
+        ranked = self.ranked(mutual_bonus=2, new_follower_credit=1)
+        # u1 is a mutual who also follows the owner. Activity 7 + mutual 2.
+        # Not 7+2+1 (new-follower credit) and not 7+2+2 (once per reply).
+        self.assertEqual(ranked["u1"], 9)
+        # u2 follows the owner only. Activity 8 + credit 1, not 8+1+1.
+        self.assertEqual(ranked["u2"], 9)
 
     def test_connection_status_marks_mutual_without_lists(self):
         folder = tempfile.mkdtemp(prefix="xn-mutual-")
@@ -129,7 +151,7 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(data.relation("u9"), "mutual")
         activity = xn.build_activity(
             data, self.since, self.now, 10, 1, 3, "both", self.now,
-            mutual_reply_bonus=4)
+            mutual_bonus=4)
         self.assertEqual(activity["ranked"]["u9"], 7)
 
 

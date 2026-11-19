@@ -598,8 +598,6 @@ def resolve_weights(cfg):
         "reply_weight": reply_weight,
         "repost_weight": optional_weight(cfg.get("repost_weight"), like_weight),
         "quote_weight": optional_weight(cfg.get("quote_weight"), reply_weight),
-        "mutual_reply_bonus": optional_weight(cfg.get("mutual_reply_bonus"), 0),
-        "new_follower_bonus": optional_weight(cfg.get("new_follower_bonus"), 0),
         "mutual_bonus": optional_weight(cfg.get("mutual_bonus"), 0),
         "new_follower_credit": optional_weight(cfg.get("new_follower_credit"), 0),
     }
@@ -914,8 +912,6 @@ DEFAULTS = {
     },
     "repost_weight": None,
     "quote_weight": None,
-    "mutual_reply_bonus": 0,
-    "new_follower_bonus": 0,
     "exclude": ["grok"],
     "rings": 3,
     "show_names": True,
@@ -1035,8 +1031,7 @@ def waiting_rule_from(value):
 
 def build_activity(data, since, until, top, like_weight, reply_weight, mode, now,
                    good_neighbours=None, mutual_bonus=0, new_follower_credit=0,
-                   repost_weight=None, quote_weight=None,
-                   mutual_reply_bonus=0, new_follower_bonus=0):
+                   repost_weight=None, quote_weight=None):
     if repost_weight is None:
         repost_weight = like_weight
     if quote_weight is None:
@@ -1084,7 +1079,6 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
 
     likes_c, reposts_c = Counter(), Counter()
     reply_c, quote_c = Counter(), Counter()
-    mutual_reply_c = Counter()
     for pid, post in data.posts.items():
         if not data._in_window(post.get("created_at"), since, until):
             continue
@@ -1096,32 +1090,24 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
                 reposts_c[uid] += 1
     for item in items:
         (quote_c if item["kind"] == "quote" else reply_c)[item["author_id"]] += 1
-        if item["kind"] != "reply":
-            continue
-        on_post = data.posts.get(item.get("on_id")) if item.get("on_id") else None
-        if on_post and is_original_post(on_post) and data.relation(item["author_id"]) == "mutual":
-            mutual_reply_c[item["author_id"]] += 1
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
         reposts = reposts_c[uid] if which != "replies" else 0
         replies = reply_c[uid] if which != "likes" else 0
         quotes = quote_c[uid] if which != "likes" else 0
-        mutual_replies = mutual_reply_c[uid] if which != "likes" else 0
-        follower_bonus = new_follower_bonus if data.relation(uid) == "follows-you" else 0
         if which == "likes":
-            replies = quotes = mutual_replies = 0
+            replies = quotes = 0
         if which == "replies":
             likes = reposts = 0
         total = (likes * like_weight
                  + reposts * repost_weight
                  + replies * reply_weight
-                 + quotes * quote_weight
-                 + mutual_replies * mutual_reply_bonus
-                 + follower_bonus)
-        if uid in data.followers and uid in data.following:
+                 + quotes * quote_weight)
+        relation = data.relation(uid)
+        if relation == "mutual":
             total += mutual_bonus
-        elif uid in data.followers:
+        elif relation == "follows-you":
             total += new_follower_credit
         return total
 
@@ -2006,8 +1992,8 @@ def thank_you_post(when, zone):
 
 
 def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per_post, per_day,
-                   repost_weight=None, quote_weight=None, mutual_reply_bonus=0,
-                   new_follower_bonus=0, mutual_bonus=0, new_follower_credit=0):
+                   repost_weight=None, quote_weight=None, mutual_bonus=0,
+                   new_follower_credit=0):
     lines = []
     if per_day:
         lines += ["### Per day", ""]
@@ -2015,9 +2001,7 @@ def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per
             activity = build_activity(
                 data, day_start, day_end, top, like_weight, reply_weight, "both", now,
                 mutual_bonus=mutual_bonus, new_follower_credit=new_follower_credit,
-                repost_weight=repost_weight, quote_weight=quote_weight,
-                mutual_reply_bonus=mutual_reply_bonus,
-                new_follower_bonus=new_follower_bonus)
+                repost_weight=repost_weight, quote_weight=quote_weight)
             totals = activity["totals"]
             lines.append(
                 f"- **{day.isoformat()}** — {totals['replies']} replies, {totals['quotes']} quotes, "
@@ -2063,8 +2047,6 @@ def main():
     parser.add_argument("--reply-weight", dest="reply_weight", type=float)
     parser.add_argument("--repost-weight", dest="repost_weight", type=float)
     parser.add_argument("--quote-weight", dest="quote_weight", type=float)
-    parser.add_argument("--mutual-reply-bonus", dest="mutual_reply_bonus", type=float)
-    parser.add_argument("--new-follower-bonus", dest="new_follower_bonus", type=float)
     parser.add_argument("--exclude", help="comma-separated handles to drop; '' for none")
     parser.add_argument("--rings", type=int)
     parser.add_argument("--top", type=int)
@@ -2146,8 +2128,6 @@ def main():
     reply_weight = weights["reply_weight"]
     repost_weight = weights["repost_weight"]
     quote_weight = weights["quote_weight"]
-    mutual_reply_bonus = weights["mutual_reply_bonus"]
-    new_follower_bonus = weights["new_follower_bonus"]
     mutual_bonus = weights["mutual_bonus"]
     new_follower_credit = weights["new_follower_credit"]
     waiting_rule = waiting_rule_from(cfg.get("waiting_rule"))
@@ -2196,9 +2176,7 @@ def main():
             data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
             good_neighbours=neighbours,
             mutual_bonus=mutual_bonus, new_follower_credit=new_follower_credit,
-            repost_weight=repost_weight, quote_weight=quote_weight,
-            mutual_reply_bonus=mutual_reply_bonus,
-            new_follower_bonus=new_follower_bonus)
+            repost_weight=repost_weight, quote_weight=quote_weight)
         md_path = os.path.join(args.out, f"report_{key}.md")
         png_path = os.path.join(args.out, f"report_{key}.png")
         text, intent = thank_you_post(now, zone)
@@ -2247,8 +2225,6 @@ def main():
                     data, since, now, cfg["handle"], cfg["top"], like_weight, reply_weight,
                     cfg["per_post"], cfg["per_day"],
                     repost_weight=repost_weight, quote_weight=quote_weight,
-                    mutual_reply_bonus=mutual_reply_bonus,
-                    new_follower_bonus=new_follower_bonus,
                     mutual_bonus=mutual_bonus,
                     new_follower_credit=new_follower_credit) + "\n")
         if args.report_card and not args.no_image:

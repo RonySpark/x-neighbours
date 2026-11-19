@@ -21,8 +21,6 @@ Weights are a quiet setting. Scoring lives in `config.json` (see [README.md](REA
 - `like_weight` (default 1): a like uses this many points.
 - `reply_weight` (default 3): a reply uses this many points.
 - `repost_weight`, `quote_weight`: optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight`.
-- `mutual_reply_bonus` (optional, default 0): extra points for a reply on the owner's original post by a mutual follow.
-- `new_follower_bonus` (optional, default 0): extra points once for someone who follows the owner and is not followed back.
 - `mutual_bonus` (default 2): extra points when you follow each other.
 - `new_follower_credit` (default 1): extra points when they follow you and you do not follow them.
 - `waiting_rule` (default `{ "per_person": true, "latest_unreplied": true }`): count each person once. They are waiting only if their latest message in that thread has no reply from the owner.

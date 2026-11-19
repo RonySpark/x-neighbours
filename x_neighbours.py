@@ -1649,8 +1649,8 @@ def thread_reply_credit(data, since, until, reply_weight, thread_reply_factor,
         if isinstance(source, dict) and source.get("id") is not None:
             owned.add(str(source["id"]))
 
-    def walk(post):
-        hops = 0
+    def chain(post):
+        steps = 0
         current = str(post["id"])
         seen = set()
         while current not in seen:
@@ -1661,32 +1661,28 @@ def thread_reply_credit(data, since, until, reply_weight, thread_reply_factor,
             parent = parent_of(node)
             if not parent:
                 return None
-            hops += 1
             if parent in roots:
-                return hops, parent
+                return steps + 1, parent
             if parent not in posts:
+                conv = node.get("conversation_id")
+                if conv in roots:
+                    return steps + 2, conv
                 return None
             current = parent
+            steps += 1
         return None
 
     def place(post):
         conv = post.get("conversation_id")
         if conv is not None and conv not in roots:
             return None
-        parent = parent_of(post)
-        if not parent:
-            return None
-        if parent in roots:
-            return 1, conv or parent
-        if parent not in posts:
-            if conv is None:
-                return None
-            return 2, conv
-        found = walk(post)
+        found = chain(post)
         if not found:
             return None
-        depth, walked = found
-        return depth, conv or walked
+        depth, root = found
+        if conv is not None and root != conv:
+            return None
+        return depth, conv or root
 
     def owner_authored(post):
         author = post.get("author_id")
@@ -1702,16 +1698,11 @@ def thread_reply_credit(data, since, until, reply_weight, thread_reply_factor,
         conv = post.get("conversation_id")
         if conv is not None and conv in roots and pid != conv:
             found.append(conv)
-        parent = parent_of(post)
-        walked = None
-        if parent in roots:
-            walked = parent
-        elif parent and parent in posts:
-            chain = walk(post)
-            if chain:
-                walked = chain[1]
-        if walked and pid != walked and walked not in found:
-            found.append(walked)
+        found_chain = chain(post)
+        if found_chain:
+            root = found_chain[1]
+            if pid != root and root not in found:
+                found.append(root)
         return found
 
     scored = []

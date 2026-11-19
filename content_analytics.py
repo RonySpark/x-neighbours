@@ -923,9 +923,12 @@ def fmt_change(item):
     pct = item.get("pct")
     if not pct:
         return "same as last week"
+    shown = f"{abs(pct):.0%}"
+    if shown == "0%":
+        return "same as last week"
     if pct > 0:
-        return f"up {pct:.0%}"
-    return f"down {abs(pct):.0%}"
+        return f"up {shown}"
+    return f"down {shown}"
 
 
 def fmt_rate(value):

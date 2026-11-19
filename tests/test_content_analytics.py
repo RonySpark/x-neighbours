@@ -779,5 +779,18 @@ class ContentOnlyImpressionsTest(unittest.TestCase):
         self.assertNotIn("Impressions 0", text)
 
 
+class RoundedChangeTest(unittest.TestCase):
+    def test_change_that_rounds_to_zero_is_not_up_or_down_zero(self):
+        """Synthetic only. +0.4% and -0.4% round to 0% and must not print up/down 0%."""
+        up_tiny = ca.fmt_change(ca.change(1004, 1000))
+        down_tiny = ca.fmt_change(ca.change(996, 1000))
+        self.assertNotIn("up 0%", up_tiny)
+        self.assertNotIn("down 0%", down_tiny)
+        self.assertEqual(up_tiny, "same as last week")
+        self.assertEqual(down_tiny, "same as last week")
+        self.assertEqual(ca.fmt_change(ca.change(1010, 1000)), "up 1%")
+        self.assertEqual(ca.fmt_change(ca.change(990, 1000)), "down 1%")
+
+
 if __name__ == "__main__":
     unittest.main()

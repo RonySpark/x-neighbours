@@ -366,6 +366,28 @@ class ConsistencyTest(unittest.TestCase):
         self.assertEqual(self.report["do_more"]["text"], "Is Tesla charging easier now?")
         self.assertEqual(self.report["underperformer"]["text"], "Huge random spike")
 
+    def test_gap_after_last_original_is_not_a_current_streak(self):
+        """Synthetic only. Originals through 14 Nov, export ends 16 Nov."""
+        def row(day, text):
+            return {
+                "date": date(2026, 11, day),
+                "adelaide_date": date(2026, 11, day),
+                "posted_at": datetime(2026, 11, day, 12, tzinfo=timezone.utc),
+                "text": text,
+                "post_id": str(day),
+                "impressions": 10,
+                "engagements": 1,
+                "engagement_rate": 0.1,
+                "new_follows": 0,
+            }
+        content = pd.DataFrame(
+            [row(day, "original") for day in range(10, 15)]
+            + [row(15, "@bot reply"), row(16, "@bot later")]
+        )
+        overview = pd.DataFrame()
+        self.assertEqual(ca.latest_export_date(overview, content), date(2026, 11, 16))
+        self.assertEqual(ca.consistency(overview, content)["streak"]["days"], 0)
+
 
 class ReportCliTest(unittest.TestCase):
     def test_writes_markdown_and_optional_json(self):

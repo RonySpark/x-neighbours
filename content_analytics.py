@@ -7,6 +7,7 @@ ignored.
 
 Usage:
   python3 content_analytics.py --exports <dir> --out <dir> [--json] [--data <dir>]
+  python3 content_analytics.py --exports <dir> --snapshot-dir PATH
   python3 content_analytics.py --exports <dir> --post-follows-csv PATH [--review-log PATH]
 """
 import argparse
@@ -23,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+import followers_welcome as fw
 import x_neighbours as xn
 
 
@@ -681,6 +683,17 @@ def load_me_id(config_path=None, data_dir=None):
     return None
 
 
+def load_snapshot_dir(config_path=None):
+    if not config_path:
+        return None
+    with open(config_path, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    if not isinstance(cfg, dict):
+        return None
+    value = cfg.get("snapshot_dir")
+    return str(value) if value else None
+
+
 def load_neighbour_data(data_dir, me_id=None):
     """Reuse x_neighbours.Data. Omit data_dir to skip follower share."""
     if not data_dir:
@@ -805,7 +818,64 @@ def follower_share(data, start, end):
     }
 
 
-def analyze(folder, keywords=None, data_dir=None, me_id=None):
+UNFOLLOW_NOTE = (
+    "Snapshots are daily, so the window is approximate. "
+    "This is correlation, not cause."
+)
+UNFOLLOW_NAME_CAP = 5
+
+
+def unfollow_window(index, posted):
+    plus1 = posted + timedelta(days=1)
+    plus2 = posted + timedelta(days=2)
+    earlier = [day for day in index if day <= posted]
+    if not earlier or plus1 not in index or plus2 not in index:
+        return None
+    return max(earlier), plus1, plus2
+
+
+def unfollow_days(posts, snapshot_dir):
+    index = {date.fromisoformat(day): users for day, users in fw.snapshots(snapshot_dir)}
+    rows = []
+    if posts is None or posts.empty:
+        return rows
+    by_day = {}
+    for _, post in posts.sort_values("posted_at").iterrows():
+        posted = post["posted_at"].astimezone(timezone.utc).date()
+        by_day[posted] = by_day.get(posted, 0) + 1
+    for posted in sorted(by_day):
+        window = unfollow_window(index, posted)
+        row = {
+            "date": posted.isoformat(),
+            "posts": by_day[posted],
+            "gone": [],
+            "gone_count": 0,
+            "status": "no_snapshot",
+        }
+        if window is None:
+            rows.append(row)
+            continue
+        baseline, plus1, plus2 = window
+        still = set(index[baseline]) & set(index[plus1])
+        gone = still - set(index[plus2])
+        names = []
+        for uid in gone:
+            user = index[plus1].get(uid) or index[baseline].get(uid) or {}
+            name = str(user.get("username") or "").lstrip("@")
+            if name:
+                names.append(name)
+        row["status"] = "ok"
+        row["gone"] = sorted(names, key=str.lower)
+        row["gone_count"] = len(gone)
+        rows.append(row)
+    return rows
+
+
+def post_unfollows(posts, snapshot_dir):
+    return {"note": UNFOLLOW_NOTE, "days": unfollow_days(posts, snapshot_dir)}
+
+
+def analyze(folder, keywords=None, data_dir=None, me_id=None, snapshot_dir=None):
     keywords = keywords or DEFAULT_KEYWORDS
     data = load_exports(folder)
     overview, content = data["overview"], data["content"]
@@ -824,6 +894,8 @@ def analyze(folder, keywords=None, data_dir=None, me_id=None):
     neighbours = load_neighbour_data(data_dir, me_id)
     if neighbours is not None:
         report["follower_share"] = follower_share(neighbours, start, end)
+    if snapshot_dir:
+        report["post_unfollows"] = post_unfollows(this_posts, snapshot_dir)
     return report
 
 
@@ -976,12 +1048,38 @@ def render_markdown(report):
             lines.append("1 non-follower engaged 2+ times (likely follow-back).")
         else:
             lines.append(f"{repeat} non-followers engaged 2+ times.")
+    unf = report.get("post_unfollows")
+    if unf:
+        lines.extend(render_post_unfollows(unf))
     lines.append("")
     if cons.get("do_more"):
         lines.append(f"Do more of this: {quoted(cons['do_more'])}.")
     if cons.get("underperformer"):
         lines.append(f"Ease off: {quoted(cons['underperformer'])}.")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_post_unfollows(unf):
+    lines = [f"Unfollows 24-48h after posts. {unf['note']}"]
+    cap = UNFOLLOW_NAME_CAP
+    for row in unf.get("days") or []:
+        day = date.fromisoformat(row["date"])
+        stamp = f"{day.day} {day.strftime('%b')}"
+        posts = f"{row['posts']} post" if row["posts"] == 1 else f"{row['posts']} posts"
+        if row.get("status") == "no_snapshot":
+            lines.append(f"{stamp}: {posts}: no snapshot.")
+            continue
+        noun = "unfollow" if row["gone_count"] == 1 else "unfollows"
+        line = f"{stamp}: {posts} -> {row['gone_count']} {noun} 24-48h later"
+        names = row.get("gone") or []
+        shown = ", ".join(f"@{name}" for name in names[:cap])
+        extra = len(names) - cap
+        if extra > 0:
+            shown = f"{shown} (+{extra} more)" if shown else f"(+{extra} more)"
+        if shown:
+            line += f": {shown}"
+        lines.append(line + ".")
+    return lines
 
 
 def write_report(report, out_dir, write_json=False):
@@ -1119,8 +1217,12 @@ def main():
     parser.add_argument("--exports", required=True, help="folder with content_*.csv and overview_*.csv")
     parser.add_argument("--out", default=".", help="folder for what_worked_week.md")
     parser.add_argument("--json", action="store_true", help="also write what_worked_week.json")
-    parser.add_argument("--config", help="optional config.json for keyword_tags")
+    parser.add_argument("--config", help="optional config.json for keyword_tags and snapshot_dir")
     parser.add_argument("--data", help="optional folder of saved X JSON; skip follower share if omitted")
+    parser.add_argument(
+        "--snapshot-dir", dest="snapshot_dir",
+        help="Echo daily snapshot folder (YYYY-MM-DD.json follower lists). Same flag as x_neighbours",
+    )
     parser.add_argument(
         "--post-follows-csv",
         help="write one row per post for the 48-hour review",
@@ -1130,9 +1232,13 @@ def main():
         help="fill follows_48h on an existing CSV by post_url status id",
     )
     args = parser.parse_args()
+    snapshot_dir = args.snapshot_dir or load_snapshot_dir(args.config)
+    if snapshot_dir and not os.path.isdir(snapshot_dir):
+        parser.error(f"snapshot folder not found: {snapshot_dir}")
     report = analyze(
         args.exports, load_keywords(args.config),
         data_dir=args.data, me_id=load_me_id(args.config, args.data),
+        snapshot_dir=snapshot_dir,
     )
     paths = write_report(report, args.out, args.json)
     if args.post_follows_csv or args.review_log:

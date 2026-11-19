@@ -300,15 +300,15 @@ def classify_post(text, keywords=None):
     text = text or ""
     stripped = text.lstrip()
     labels = []
-    if re.search(r"https?://|t\.co", text, re.I):
+    if re.search(r"https?://|\bt\.co\b", text, re.I):
         labels.append("link")
-    if re.match(r"\d+\s*/", stripped) or "🧵" in text:
+    if re.match(r"\d+\s*/(?!\d)", stripped) or "🧵" in text:
         labels.append("thread")
     if stripped.startswith("@"):
         labels.append("reply")
     else:
         labels.append("original")
-    if "?" in text:
+    if "?" in re.sub(r"https?://\S+", "", text, flags=re.I):
         labels.append("question")
     length = len(text)
     if length <= SHORT_MAX:

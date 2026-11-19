@@ -597,7 +597,60 @@ class OverlapExportsTest(unittest.TestCase):
         self.assertEqual(int(data["overview"].iloc[0]["impressions"]), 70)
 
 
+def _pick_row(post_id, posted_at, impressions, engagement_rate, text):
+    return {
+        "post_id": post_id,
+        "posted_at": posted_at,
+        "text": text,
+        "impressions": impressions,
+        "engagements": int(impressions * engagement_rate),
+        "engagement_rate": engagement_rate,
+        "new_follows": 0,
+    }
+
+
+def _tied_pick_posts(order):
+    """Six fictional posts. Two share top impressions, two share the floor, two notable posts share a low rate."""
+    older = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    newer = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    mid = datetime(2026, 11, 13, tzinfo=timezone.utc)
+    rows = {
+        "high_old": _pick_row("10", older, 100, 0.05, "high old"),
+        "high_new": _pick_row("20", newer, 100, 0.05, "high new"),
+        "star": _pick_row("15", mid, 90, 0.50, "star"),
+        "mid": _pick_row("25", mid, 50, 0.10, "mid"),
+        "quiet_old": _pick_row("30", older, 10, 0.01, "quiet old"),
+        "quiet_new": _pick_row("40", newer, 10, 0.01, "quiet new"),
+    }
+    return pd.DataFrame([rows[name] for name in order])
+
+
+class TiedPickTest(unittest.TestCase):
+    def test_tied_picks_ignore_row_order(self):
+        orders = [
+            ("high_old", "high_new", "star", "mid", "quiet_old", "quiet_new"),
+            ("quiet_new", "quiet_old", "mid", "star", "high_new", "high_old"),
+        ]
+        picks = []
+        for order in orders:
+            posts = _tied_pick_posts(order)
+            top, bottom = ca.ranked_posts(posts, "impressions")
+            examples = ca.pick_examples(posts)
+            picks.append({
+                "best": top[0]["post_id"],
+                "quietest": bottom[0]["post_id"],
+                "ease_off": examples["underperformer"]["post_id"],
+                "do_more": examples["do_more"]["post_id"],
+            })
+        self.assertEqual(picks[0], picks[1])
+        self.assertEqual(picks[0]["best"], "20")
+        self.assertEqual(picks[0]["quietest"], "40")
+        self.assertEqual(picks[0]["ease_off"], "20")
+        self.assertEqual(picks[0]["do_more"], "15")
+
+
 class BlankPostIdTest(unittest.TestCase):
+
     def test_skips_blank_and_non_numeric_ids_without_mangling_digits(self):
         folder = tempfile.mkdtemp(prefix="xn-blank-id-")
         _write_csv(

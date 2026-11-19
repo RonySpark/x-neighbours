@@ -355,6 +355,55 @@ class ThreadReplyScoreTest(unittest.TestCase):
         # Default factor 0.5 * reply_weight 3. No owner reply, so no bonus.
         self.assertEqual(activity["ranked"]["alice"], 1.5)
 
+    def test_missing_parent_counts_as_depth_two_and_the_next_reply_still_counts(self):
+        root = owner_post("r1", "2026-11-04T09:00:00Z")
+        gap = neighbour_reply(
+            "g1", "alice", "2026-11-04T10:00:00Z", "alice under a missing parent", "gone")
+        under = neighbour_reply(
+            "g2", "bob", "2026-11-04T11:00:00Z", "bob under alice", "g1")
+        deeper = neighbour_reply(
+            "g3", "alice", "2026-11-04T12:00:00Z", "alice two steps under the gap", "g2")
+        weights = {"thread_reply_factor": 0.5, "author_engaged_bonus": 0}
+        full, folder = thread_fixture([root], [gap, under, deeper])
+        short, _folder = thread_fixture([root], [gap, under])
+        # The missing parent makes alice depth 2 (1.5). Bob, one step later, is depth 3 (1.5).
+        # Alice's next reply is depth 4 and adds 0, so dropping it leaves both scores.
+        full_ranked = self.activity(full, **weights)["ranked"]
+        short_ranked = self.activity(short, **weights)["ranked"]
+        self.assertEqual(full_ranked["alice"], 1.5)
+        self.assertEqual(full_ranked["bob"], 1.5)
+        self.assertEqual(short_ranked["alice"], 1.5)
+        self.assertEqual(short_ranked["bob"], 1.5)
+
+        orphan = {
+            "id": "o9",
+            "author_id": "bob",
+            "created_at": "2026-11-04T10:30:00Z",
+            "text": "bob with no conversation",
+            "referenced_tweets": [{"type": "replied_to", "id": "gone"}],
+        }
+        lone, _folder = thread_fixture([root], [orphan])
+        lone_ranked = self.activity(lone, **weights)["ranked"]
+        self.assertEqual(lone_ranked["bob"], 0)
+
+        activity = self.activity(full, **weights)
+        path = os.path.join(folder, "report.md")
+        xn.write_chat_report(
+            activity, path, "me", self.since, self.now, "Last 24 hours", window="day")
+        with open(path, encoding="utf-8") as fh:
+            report = fh.read()
+        self.assertNotIn("alice under a missing parent", report)
+        self.assertNotIn("bob under alice", report)
+        self.assertNotIn("alice two steps under the gap", report)
+        unanswered, answered = xn.greeting_rows(activity["threads"])
+        self.assertEqual(unanswered, [])
+        self.assertEqual(answered, [])
+        first_replies = [
+            row for row in xn.open_item_rows(full, activity, None, "me")
+            if row["kind"] == "first_reply"
+        ]
+        self.assertEqual(first_replies, [])
+
 
 if __name__ == "__main__":
     unittest.main()

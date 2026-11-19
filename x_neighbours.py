@@ -39,6 +39,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -241,6 +242,66 @@ def counts_section_lines(rows):
             + f". Ratio {_fmt_ratio(now_ratio)} now vs {_fmt_ratio(then_ratio)} then"
         )
     return lines
+
+
+ADELAIDE = ZoneInfo("Australia/Adelaide")
+
+
+def adelaide_snapshot_date(day_str):
+    day = date.fromisoformat(day_str)
+    return datetime(day.year, day.month, day.day, 12, tzinfo=ADELAIDE).date()
+
+
+def count_row_from_snapshot(folder, day, followers):
+    following = {}
+    path = os.path.join(folder, "following", f"{day}.json")
+    if os.path.isfile(path):
+        _, payload = load(path)[0]
+        if isinstance(payload, dict):
+            following = {str(key): user for key, user in payload.items() if isinstance(user, dict)}
+    follower_ids = set(followers)
+    verified = sum(1 for user in followers.values() if user.get("verified"))
+    return {
+        "date": adelaide_snapshot_date(day),
+        "followers_total": len(followers),
+        "followers_verified": verified,
+        "following_total": len(following),
+        "mutuals": len(follower_ids & set(following)),
+    }
+
+
+def write_counts_csv(path, rows):
+    fields = ("date",) + COUNT_FIELDS
+    folder = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".counts-", suffix=".csv", dir=folder)
+    try:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields, lineterminator="\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({
+                    "date": row["date"].isoformat(),
+                    **{key: row[key] for key in COUNT_FIELDS},
+                })
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def backfill_counts(folder):
+    """Add one counts.csv row per snapshot date that is not already present."""
+    import followers_welcome as fw
+    path = os.path.join(folder, "counts.csv")
+    by_date = {row["date"]: row for row in (load_counts_csv(path) or [])}
+    for day, users in fw.snapshots(folder):
+        stamped = adelaide_snapshot_date(day)
+        if stamped in by_date:
+            continue
+        by_date[stamped] = count_row_from_snapshot(folder, day, users)
+    write_counts_csv(path, [by_date[day] for day in sorted(by_date)])
+    return path
 
 
 def ts(s):
@@ -2693,6 +2754,9 @@ def main():
     parser.add_argument(
         "--snapshot-dir", dest="snapshot_dir",
         help="Echo daily snapshot folder (YYYY-MM-DD.json followers, following/YYYY-MM-DD.json)")
+    parser.add_argument(
+        "--backfill-counts", action="store_true",
+        help="add missing counts.csv rows from follower snapshots, then exit")
     parser.add_argument("--out", default=here)
     parser.add_argument("--now", help="UTC ISO time the data was fetched (default: now)")
     parser.add_argument("--like-weight", dest="like_weight", type=float)
@@ -2728,6 +2792,12 @@ def main():
     parser.add_argument("--good-neighbours", dest="good_neighbours",
                         help="path to the personal good neighbours JSON; a missing file is an empty list")
     args = parser.parse_args()
+    if args.backfill_counts:
+        folder = args.snapshot_dir
+        if not folder or not os.path.isdir(folder):
+            parser.error("--backfill-counts needs --snapshot-dir pointing at a snapshot folder")
+        backfill_counts(folder)
+        return
     cfg = dict(DEFAULTS)
     if os.path.exists(args.config):
         with open(args.config, encoding="utf-8") as fh:

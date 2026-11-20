@@ -8,6 +8,7 @@ python3 version.py
 
 ## Unreleased
 
+- `mutual_bonus` is added once for each reply from a mutual on an original post. A reply under the owner's own reply adds none.
 - Replies lists only a first-level reply or a quote on the owner's original post, newest first. A reply under the owner's own reply drops off. Waiting is still one row per person, and only when their latest message in that thread has no reply from the owner. ([#39](https://github.com/Skybatan/x-neighbours/pull/39))
 - The house-framed thank-you picture shows each neighbour's display name, with @username on the line below. A missing name stays @username alone. ([#38](https://github.com/Skybatan/x-neighbours/issues/38))
 - What's new shows each good neighbour's newest original post. A quote of their own counts. A reply or a plain repost does not. The age is that post's `created_at` against the current UTC time, not the report window. ([#36](https://github.com/Skybatan/x-neighbours/issues/36))

@@ -281,6 +281,21 @@ class ThreadReplyScoreTest(unittest.TestCase):
             data, since or self.since, self.now, 10, 1, reply_weight, "both", self.now,
             **weights)
 
+    def test_depth_two_does_not_add_mutual_bonus(self):
+        root = owner_post("r1", "2026-11-04T09:00:00Z")
+        first = neighbour_reply(
+            "a1", "alice", "2026-11-04T10:00:00Z", "alice on the original", "r1")
+        deep = neighbour_reply(
+            "a2", "alice", "2026-11-04T11:00:00Z", "alice deeper in the thread", "a1")
+        data, _folder = thread_fixture([root], [first, deep])
+        data.users["alice"]["connection_status"] = ["following", "followed_by"]
+        activity = self.activity(
+            data, mutual_bonus=10, thread_reply_factor=0.5, author_engaged_bonus=0)
+        # One first-level reply is 3, plus mutual_bonus 10 once. The depth-2 reply
+        # adds 0.5 * 3 and does not add another 10.
+        self.assertEqual(activity["ranked"]["alice"], 14.5)
+        self.assertEqual(activity["totals"]["replies"], 1)
+
     def test_depth_four_adds_nothing(self):
         root = owner_post("r1", "2026-11-04T09:00:00Z")
         chain = [

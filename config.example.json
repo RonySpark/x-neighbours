@@ -5,6 +5,8 @@
   "reply_weight": 3,
   "mutual_bonus": 2,
   "new_follower_credit": 1,
+  "thread_reply_factor": 0.5,
+  "author_engaged_bonus": 1.0,
   "waiting_rule": {
     "per_person": true,
     "latest_unreplied": true

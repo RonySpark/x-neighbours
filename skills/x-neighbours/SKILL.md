@@ -31,6 +31,8 @@ Weights are a quiet setting. Scoring lives in `config.json` (see [README.md](../
 - `repost_weight`, `quote_weight`: optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight`.
 - `mutual_bonus` (default 2): extra points for each reply from a mutual on your original posts. A reply under your own reply adds none.
 - `new_follower_credit` (default 1): extra points when they follow you, you do not follow them, and they were absent from the follower snapshot at or before the start of the last 7 days. No such snapshot means no credit and one note.
+- `thread_reply_factor` (default 0.5): scoring gives this factor times `reply_weight` for a depth-2 or depth-3 reply. The default is half credit. Depth 4 and deeper add none. At most 3 count per neighbour per root post. These replies do not add `mutual_bonus`. The Replies section still lists only first-level replies and quotes.
+- `author_engaged_bonus` (default 1.0): one bonus of this many times `reply_weight` per neighbour per conversation, when the owner replied in that conversation and the neighbour replied after.
 - `waiting_rule` (default `{ "per_person": true, "latest_unreplied": true }`): count each person once. They are waiting only if their latest message in that thread has no reply from the owner.
 
 ## Upgrading

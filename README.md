@@ -118,7 +118,7 @@ The clone and `config.json` stay where they are. The good neighbours list and th
 | `like_weight`, `reply_weight` | Quiet points. A reply uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
 | `repost_weight`, `quote_weight` | Optional. Omit them and a repost uses `like_weight`, a quote uses `reply_weight` |
 | `mutual_bonus` | Extra quiet points per reply from a mutual on your original posts. Default 2. A reply on your reply adds none. Not printed. `mutual_reply_bonus` still works as this key and prints a rename warning on stderr |
-| `new_follower_credit` | Extra quiet points when they follow you and you do not follow them. Default 1. Not printed. `new_follower_bonus` still works as this key and prints a rename warning on stderr |
+| `new_follower_credit` | Extra quiet points when they follow you, you do not follow them, and they were absent from the follower snapshot at or before the start of the last 7 days. Default 1. Not printed. No snapshot that old means no credit and one stderr note. `new_follower_bonus` still works as this key and prints a rename warning on stderr |
 | `waiting_rule` | Replies waiting count. `per_person` (default true) counts each person once. `latest_unreplied` (default true) counts them only if their latest message in that thread has no reply from the owner |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |

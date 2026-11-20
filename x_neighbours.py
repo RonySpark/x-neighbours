@@ -154,6 +154,37 @@ def snapshot_age_line(snapshot_date, now, following_missing=False):
     return line
 
 
+def note_missing_follower_baseline():
+    if note_missing_follower_baseline.done:
+        return
+    note_missing_follower_baseline.done = True
+    print(
+        "No follower snapshot at or before the week start. New-follower credit is 0.",
+        file=sys.stderr,
+    )
+
+
+note_missing_follower_baseline.done = False
+
+
+def followers_new_this_week(folder, week_start):
+    """Ids in the newest snapshot and not in the snapshot on or before week_start.
+
+    None when no snapshot file is dated on or before week_start.
+    """
+    if not folder or not os.path.isdir(folder):
+        return None
+    import followers_welcome as fw
+    snaps = sorted(fw.snapshots(folder), key=lambda pair: pair[0])
+    if not snaps:
+        return None
+    limit = week_start.isoformat()
+    baseline = [users for day, users in snaps if day <= limit]
+    if not baseline:
+        return None
+    return set(snaps[-1][1]) - set(baseline[-1])
+
+
 def load_counts_csv(path):
     """Parse snapshot counts.csv. Missing or unreadable returns None."""
     if not path or not os.path.isfile(path):
@@ -1772,6 +1803,14 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         if on_post and is_original_post(on_post) and data.relation(item["author_id"]) == "mutual":
             mutual_replies[item["author_id"]] += 1
 
+    zone = getattr(data, "score_zone", None) or timezone.utc
+    week_start = (now - timedelta(days=7)).astimezone(zone).date()
+    fresh = followers_new_this_week(getattr(data, "snapshot_folder", None), week_start)
+    if fresh is None:
+        if new_follower_credit:
+            note_missing_follower_baseline()
+        fresh = set()
+
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
         reposts = reposts_c[uid] if which != "replies" else 0
@@ -1788,7 +1827,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         relation = data.relation(uid)
         if relation == "mutual" and which != "likes":
             total += mutual_replies[uid] * mutual_bonus
-        elif relation == "follows-you":
+        elif relation == "follows-you" and uid in fresh:
             total += new_follower_credit
         return total
 
@@ -2896,6 +2935,7 @@ def main():
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     data = Data(args.data, me_id, snapshot_dir=snapshot_dir)
+    data.snapshot_folder = snapshot_dir
     data.exclude = {handle.lower() for handle in cfg["exclude"]}
     neighbours = load_good_neighbours(cfg.get("good_neighbours"))
     me = {"id": me_id, "username": cfg["handle"]}
@@ -2930,6 +2970,7 @@ def main():
             )
         ]
     zone = owner_zone(cfg.get("timezone"))
+    data.score_zone = zone
     for key, span, label in windows:
         since = span if isinstance(span, datetime) else now - timedelta(days=span)
         activity = build_activity(

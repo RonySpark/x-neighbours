@@ -8,7 +8,7 @@ python3 version.py
 
 ## Unreleased
 
-- Owner-timeline params, liker params, and reposted-by params are built in `fetch_plan.py`. The checks are `tests/test_fetch_plan.py`.
+- The report notes liker and reposter files the shared budget should already have: last 24 hours when the count is above 0, and the rest of the 7 days when it is at least 3. A liker file for a post with at least 10 likes is noted when under 80% of them were saved. A plain repost saved in `posts_*.json` does not add likes or reposts to the score.
 - A depth-2 or depth-3 reply scores `thread_reply_factor` (default 0.5) times `reply_weight`, at most 3 per neighbour per root post. Depth 4 and deeper add none. `author_engaged_bonus` (default 1.0) times `reply_weight` applies once per neighbour per conversation when the owner replied there and the neighbour replied after. Those replies do not add `mutual_bonus`. The Replies section, the waiting list, and open items still list only first-level replies and quotes.
 - `new_follower_credit` goes only to someone absent from the follower snapshot on or before the week start and present in the newest snapshot. No snapshot that old means no credit and one note.
 - `--backfill-counts` adds missing `counts.csv` rows from follower snapshots, one Adelaide date each, and leaves an existing date as it is. A day with no following snapshot leaves following and mutuals blank. The trend skips a blank day for following, mutuals, and ratio. A second run writes the same file.

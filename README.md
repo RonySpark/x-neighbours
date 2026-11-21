@@ -171,14 +171,14 @@ Pick a UTC timestamp `T` when you start: the actual current UTC time, not a left
 
 Request `referenced_posts` in `post.fields`. Older dumps may say `referenced_tweets`. The loader prefers `referenced_tweets` and falls back to `referenced_posts`. Save `includes` too.
 
-`{ID}` is your user id. Always pass `max_results` 100 for posts and mentions; do not omit it (the tool then pages at 25). Page with `pagination_token` set to the previous `meta.next_token`. Keep paging while `next_token` is present. Some tools cap a page at 25 even when `max_results` is 100. A short page is not the end of the list. For mentions, keep calling until there is no `next_token`. Likers page through `fetch_plan.page_likers`.
+`{ID}` is your user id. Always pass `max_results` 100 for posts, mentions, and likers; do not omit it (the tool then pages at 25). Page with `pagination_token` set to the previous `meta.next_token`. Keep paging while `next_token` is present. Some tools cap a page at 25 even when `max_results` is 100. A short page is not the end of the list. For mentions, keep calling until there is no `next_token`.
 
 | # | Tool | Arguments | Save as |
 |---|---|---|---|
-| 1 | `get_users_posts` | Owner timeline: `fetch_plan.owner_timeline_params` (`tests/test_fetch_plan.py`) | `posts_1`, `posts_2`, … |
+| 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets` (do not exclude replies), `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
 | 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, `user.fields=username,name,description,profile_image_url`. Save `includes` too | `mentions_1`, … |
-| 3 | `get_posts_liking_users` | `fetch_plan.liking_users_params` (`tests/test_fetch_plan.py`) | `likes_<postid>` |
-| 4 | `get_posts_reposted_by` | `fetch_plan.reposted_by_params` (`tests/test_fetch_plan.py`) | `reposts_<postid>` |
+| 3 | `get_posts_liking_users` | Posts with likes. `user.fields=username,name,description,profile_image_url` | `likes_<postid>` |
+| 4 | `get_posts_reposted_by` | Posts with reposts. Same user fields | `reposts_<postid>` |
 | 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_tweets`, `expansions=author_id` | `quotes_<postid>` |
 | 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, saved as `my_posts_1`. A failed call is skipped. Those replies are how Replies marks a mention answered | `my_likes_1`, `my_posts_1` |
 | 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=100`, `exclude` `replies` and `retweets`, `post.fields=created_at,text,conversation_id`, `expansions=author_id,in_reply_to_user_id,referenced_posts`. One more page as `latest_<userid>_p2` if the first page is all engaged | `latest_<userid>` |
@@ -191,7 +191,7 @@ On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on t
 
 Stay around **30 calls a minute** and **1,000 calls a day**. Send about 12 calls, then pause.
 
-Reposts and quotes are one call per post:
+Likes, reposts, and quotes are one call per post:
 
 - The last 24 hours: every post with that count above 0.
 - Days 2–7, when a daily run already covered day 1: only counts of 3 or more.
@@ -199,8 +199,6 @@ Reposts and quotes are one call per post:
 - Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty. If that page is already all engaged, fetch one more page.
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.
 - Keep paging while `next_token` is present and you are inside the day's budget. A 25-item page is not complete if a next token remains.
-
-Likers: `fetch_plan.liking_users_params` and `fetch_plan.page_likers` (`tests/test_fetch_plan.py`).
 
 Follower and following lists come from `--snapshot-dir`. The Monday run reuses that morning's daily files and only fetches the earlier part of the week, including likes, reposts, and quotes. The two runs share the 1,000-read cap. The steps are in [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md).
 

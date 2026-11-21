@@ -17,7 +17,7 @@ You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every ru
 - Stay within about **1,000 X reads a day** and **30 a minute**. Send about 12 calls, then pause. Count as you go. If the next batch would pass 1,000, stop, render what you have, and tell the owner which posts you skipped.
 - Followers and following come from Echo's daily snapshot. Pass `--snapshot-dir /workspace/content/followers` (or set `snapshot_dir` in config) on every run. Do not call `get_users_me_followers` or `get_users_me_following`. If `--snapshot-dir` is absent, the script falls back to saved `data/followers_*.json` and `data/following_*.json`. Do not fetch those lists from X to fill that fallback.
 - Save every X tool result with `python3 save_raw.py <tool-result-file> <name>`. Never paste raw API JSON into this chat. Those files are large and will blow the context. Write them to disk and drop the payload.
-- For posts, mentions, and likers, always pass `max_results` **100**. Do not omit it (the tool then pages at 25) and do not set 25. Keep paging mentions until `meta.next_token` is absent.
+- For posts and mentions, always pass `max_results` **100**. Do not omit it (the tool then pages at 25) and do not set 25. Keep paging mentions until `meta.next_token` is absent.
 - This run is **read-only**. Never follow, unfollow, like, unlike, repost, bookmark, post, reply, or DM. Never open a GitHub issue yourself. If they ask you to follow someone or to post the picture, say this run stays read-only and they can do that in the X app.
 - Leave bot accounts out. `@grok` is already in `exclude`. They can name other handles to skip anytime.
 - Never commit user data. Do not commit or push `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `good_neighbours.json`, `state.json`, or `open_items.csv`. Do not open a pull request with those files. Do not run `git add .`. For a normal run, commit nothing. `git pull` is fine: those paths are gitignored. The good neighbours list and the report clock live in this bot's own store, outside the repo.
@@ -72,27 +72,19 @@ python3 save_raw.py <tool-result-file> <name>
 
 That writes `data/<name>.json`. Raw JSON and text wrapped around one JSON object both work. If you already have the JSON object, write `data/<name>.json` yourself from a file on disk, never by dumping a large page into the conversation.
 
-Use the built-in public X tools for `get_users_posts`, `get_users_mentions`, `get_posts_reposted_by`, `get_posts_quoted_posts`, and `get_posts_by_ids`. Use the owner's X plugin for likers (`get_posts_liking_users`), liked posts (`get_users_liked_posts`), and bookmarks. `get_users_me` and `get_users_by_username` stay on the owner's plugin. Do not call `get_users_me_followers` or `get_users_me_following`. Always set `max_results` to **100** for posts, mentions, and likers. Do not omit it (the tool then pages at 25) and do not set 25. Page with `pagination_token` set to the previous response's `meta.next_token`. Keep paging while `meta.next_token` is present. Some tools cap a page at 25 even when `max_results` is 100; a short page is not the end of the list. Stop only when there is no next token, or the day's budget is gone. For mentions, keep calling until there is no `next_token`.
+Use the built-in public X tools for `get_users_posts`, `get_users_mentions`, `get_posts_reposted_by`, `get_posts_quoted_posts`, and `get_posts_by_ids`. Use the owner's X plugin for likers (`get_posts_liking_users`), liked posts (`get_users_liked_posts`), and bookmarks. `get_users_me` and `get_users_by_username` stay on the owner's plugin. Do not call `get_users_me_followers` or `get_users_me_following`. Always set `max_results` to **100** for posts and mentions. Do not omit it (the tool then pages at 25) and do not set 25. Page with `pagination_token` set to the previous response's `meta.next_token`. Keep paging while `meta.next_token` is present. Some tools cap a page at 25 even when `max_results` is 100; a short page is not the end of the list. For posts and mentions, stop only when there is no next token, or the day's budget is gone. For mentions, keep calling until there is no `next_token`. Likers page through `fetch_plan.page_likers`.
 
 Request `referenced_posts` in `post.fields` (the expansion is also `referenced_posts`). Older dumps may say `referenced_tweets`. The loader prefers `referenced_tweets` and falls back to `referenced_posts`. Save the whole response, including `includes`.
 
-When the tool allows it, add `connection_status` to `user.fields` so mutual-follow and new-follower scoring can use it.
+When the tool allows it, add `connection_status` to `user.fields` so mutual-follow and new-follower scoring can use it. `get_posts_reposted_by` uses `fetch_plan.reposted_by_params`.
 
 `{ID}` is the owner's user id from config.
 
 ### 1. Posts
 
-`get_users_posts`
+`get_users_posts` for the owner's timeline. Build that request with `fetch_plan.owner_timeline_params` (`tests/test_fetch_plan.py`).
 
-- `id`: `{ID}`
-- `start_time`: `START`
-- `exclude`: `retweets`
-- `max_results`: `100` (never 25; never omit this)
-- `post.fields`: `created_at,public_metrics,in_reply_to_user_id,referenced_tweets,conversation_id`
-- `expansions`: `author_id,referenced_posts`
-- `user.fields`: `username,name,profile_image_url,public_metrics`
-
-Save as `posts_1`, `posts_2`, and so on. On a scheduled run, use `posts_day_*` or `posts_week_*` as the Routines section says. The script loads every `posts_*.json`. Do not pass `exclude=replies`. The owner's own replies have to be in these pages so Replies can tell an original post from a reply, and can see which replies the owner already answered.
+Save as `posts_1`, `posts_2`, and so on. On a scheduled run, use `posts_day_*` or `posts_week_*` as the Routines section says. The script loads every `posts_*.json`. The owner's own replies have to be in these pages so Replies can tell an original post from a reply, and can see which replies the owner already answered.
 
 `referenced_posts` is how these X tools expand the parent post. Some payloads call that list `referenced_tweets`. Pass both names, and save the whole response, including `includes`. The script reads either name. `conversation_id` is the thread root: it matches the post id on an original post and differs on a reply.
 
@@ -121,28 +113,13 @@ A Replies entry is only a top-level reply or a quote of the owner's post:
 
 ### 3. Likers
 
-For each of the owner's posts in the fetched window:
-
-- Last 24 hours and `like_count` greater than 0: fetch likers.
-- Days 2–7 and `like_count` at least 3: fetch likers. This assumes a daily run already covered day 1 with the >0 rule.
-- Weekly-only (no daily run that week): every post with `like_count` greater than 0. Do not use the 3-or-more skip; a weekly-only pass that skips 1–2 likes under-counts the week.
-- Otherwise skip the post. Most skips on a daily+Monday setup are short replies with one or two likes.
-
-`get_posts_liking_users`
-
-- `id`: the post id
-- `max_results`: `100` (never 25; never omit this)
-- `user.fields`: `username,name,description,public_metrics,profile_image_url`
-
-Save as `likes_<postid>`. If `meta.next_token` is present and the day's budget allows, save the next page as `likes_<postid>_p2`, and so on. Keep paging while `next_token` is present. Do not stop after one extra page.
-
-Skip a post you already saved likers for earlier the same day.
+On a week run, `fetch_plan.liking_users_params(run, post_id)` for each owner post in the window with `like_count` greater than 0. Page with `fetch_plan.page_likers`. Both are checked in `tests/test_fetch_plan.py`. Save as `likes_<postid>`, then `likes_<postid>_p2`, and so on. Skip a post you already saved likers for earlier the same day.
 
 ### 4. Reposts and quote posts
 
-Same budget rule as likes, using `repost_count` and `quote_count` from the post's `public_metrics`. Last 24 hours: every post with that count above 0. Days 2–7 on a daily+Monday setup: only counts of 3 or more. Weekly-only: every post with that count above 0. Skip a file you already saved.
+Using `repost_count` and `quote_count` from the post's `public_metrics`. Last 24 hours: every post with that count above 0. Days 2–7 on a daily+Monday setup: only counts of 3 or more. Weekly-only: every post with that count above 0. Skip a file you already saved.
 
-`get_posts_reposted_by` — `id` the post id, `max_results` 100, `user.fields=username,name,description,public_metrics,profile_image_url`. Save as `reposts_<postid>`.
+`get_posts_reposted_by` — `fetch_plan.reposted_by_params` (`tests/test_fetch_plan.py`). Save as `reposts_<postid>`.
 
 `get_posts_quoted_posts` — `id` the post id, `max_results` 100, `post.fields=created_at,author_id,text,referenced_posts,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url`. Save as `quotes_<postid>`.
 
@@ -230,9 +207,9 @@ Profile photos are not drawn beside names in the chat. A message can include a g
 
 Create both during the first run unless they only want a weekly report. Do not ask first. Tell the owner afterwards that they can change the time or turn either one off by asking.
 
-Both run at 9:00 AM in the owner's timezone. Count every X call from both toward the same cap: about 30 a minute and 1,000 a day. On Monday, run the daily job first, then the weekly job, and do not fetch the last 24 hours twice.
+Both run at 9:00 AM in the owner's timezone. Count every X call from both toward the same cap: about 30 a minute and 1,000 a day. On Monday, run the daily job first, then the weekly job, and do not fetch posts or mentions for the last 24 hours twice.
 
-Weekly-only means there is no daily routine. One Monday job covers the last 7 days and must fetch likers, reposters, and quoters for every post with that count above 0. The days-2-to-7 “at least 3” skip is only safe when a daily run already fetched the 1–2 counts for recent posts.
+Weekly-only means there is no daily routine. One Monday job covers the last 7 days and must fetch likers, reposters, and quoters for every post with that count above 0. The days-2-to-7 “at least 3” skip for reposts and quotes is only safe when a daily run already fetched the 1–2 counts for recent posts.
 
 ### Every day
 
@@ -240,7 +217,7 @@ Weekly-only means there is no daily routine. One Monday job covers the last 7 da
 2. Do not call `get_users_me_followers` or `get_users_me_following`. Pass `--snapshot-dir /workspace/content/followers`.
 3. Pick `T`. `START` is `T` minus 24 hours.
 4. Fetch posts and mentions from `START`. Save them as `posts_day_1`, `posts_day_2`, … and `mentions_day_1`, ….
-5. Fetch likers, reposters, and quote posts for that day with the budget rule above. Skip files you already have.
+5. Fetch reposters and quote posts for that day with the budget rule above. Skip files you already have.
 6. If today's `my_likes_1.json` or `my_posts_1.json` is missing, fetch those small pages (section 5). Then fetch latest posts (`latest_<userid>.json`) for each good neighbour, or for the ranked ten when the list is empty.
 7. Run `python3 x_neighbours.py --now <T> --windows day --snapshot-dir /workspace/content/followers --good-neighbours <path> --state <state path>`.
 8. Send the report with “How to send a report”: message 1 is `report_day.md` with no image, message 2 is the thank-you text and link with `x_neighbours_day.png` in that message's `images` field. Then the ⭐ Add card if `add_question` is present. If they pick someone, add them with `good_neighbours.py`.
@@ -252,9 +229,9 @@ Leave the files in place. Later reports filter them by time.
 If today's `posts_day_1.json` is missing, do the daily run first.
 
 1. Do not call `get_users_me_followers` or `get_users_me_following`. Pass `--snapshot-dir /workspace/content/followers`.
-2. Reuse today's posts, mentions, likes, reposts, quotes, `my_likes_*.json`, `my_posts_1.json`, and latest-post files. Do not request the last 24 hours again.
-3. If saved posts already cover `T` minus 7 days through `T` minus 24 hours, do not page posts or mentions for that span. Fetch only missing liker, reposter, and quote files for older posts whose count is 3 or more.
-4. If that span is missing, fetch it once: `get_users_posts` and `get_users_mentions` with `start_time` of `T` minus 7 days and `end_time` of `T` minus 24 hours. Save as `posts_week_1`, … and `mentions_week_1`, …. Then the same 3-or-more rule for likes, reposts, and quotes. Refresh `latest_<userid>.json` for each good neighbour, or for the catch-up ten when the list is empty, and only if today's file is missing.
+2. Reuse today's posts, mentions, likes, reposts, quotes, `my_likes_*.json`, `my_posts_1.json`, and latest-post files. Do not request posts or mentions for the last 24 hours again.
+3. If saved posts already cover `T` minus 7 days through `T` minus 24 hours, do not page posts or mentions for that span. Fetch missing reposter and quote files for older posts whose count is 3 or more. Likers are section 3.
+4. If that span is missing, fetch it once: `get_users_posts` and `get_users_mentions` with `start_time` of `T` minus 7 days and `end_time` of `T` minus 24 hours. Save as `posts_week_1`, … and `mentions_week_1`, …. Then the same 3-or-more rule for reposts and quotes. Refresh `latest_<userid>.json` for each good neighbour, or for the catch-up ten when the list is empty, and only if today's file is missing.
 5. Run `python3 x_neighbours.py --now <T> --windows week --snapshot-dir /workspace/content/followers --good-neighbours <path> --state <state path>`. Do not send the ⭐ Add card on this report.
 6. Send the report with “How to send a report”: message 1 is `report_week.md` with no image, message 2 is the thank-you text and link with `x_neighbours_week.png` in that message's `images` field. Do not post it. Do not send a report card unless they asked for `--report-card`. After those two messages, add one line and nothing else: “Anything you'd change about X Neighbours? Tell me and I'll turn it into a feedback link.” That line is `feedback_line` in the script output. Do not fetch anything for it.
 
@@ -268,7 +245,7 @@ Use this when there is no daily routine: the owner asked for weekly only, or onl
 2. Do not call `get_users_me_followers` or `get_users_me_following`. Pass `--snapshot-dir /workspace/content/followers`.
 3. Pick `T`. `START` is `T` minus 7 days.
 4. Fetch posts and mentions from `START`. Save as `posts_week_1`, … and `mentions_week_1`, ….
-5. Fetch likers, reposters, and quote posts for **every** post in that window whose `like_count`, `repost_count`, or `quote_count` is greater than 0. Do not skip counts of 1 or 2. Skip a file you already saved for the same post this week.
+5. Fetch reposters and quote posts for **every** post in that window whose `repost_count` or `quote_count` is greater than 0. Do not skip counts of 1 or 2. Likers are section 3. Skip a file you already saved for the same post this week.
 6. If this week's `my_likes_1.json` or `my_posts_1.json` is missing, fetch those small pages (section 5). Then fetch latest posts (`latest_<userid>.json`) for each good neighbour, or for the ranked ten when the list is empty, and only if this week's file is missing.
 7. Run `python3 x_neighbours.py --now <T> --windows week --snapshot-dir /workspace/content/followers --good-neighbours <path> --state <state path>`. Do not send the ⭐ Add card on this report.
 8. Send the report with “How to send a report”: message 1 is `report_week.md` with no image, message 2 is the thank-you text and link with `x_neighbours_week.png` in that message's `images` field. After those two messages, add the `feedback_line` as on Monday.
@@ -336,7 +313,7 @@ If `ask` is false, reply with one line that the last report is still fresh (`age
 
 If `ask` is true, send one yes/no question card with `question` and stop. Do not fetch, and do not send a report, until they answer. The usual question is “Your last report was 2 hours ago. Want a fresh one?”
 
-If they say no, stop. If they say yes, run a fresh report. `START` is `fetch_since` from that check (the end of the last report, or 24 hours ago when there is no report, and never more than 7 days). Pass it as `--since`. Use the same read budget as a daily run when the gap is under 24 hours, and the days-2-to-7 budget when it is longer. On a weekly-only setup, use the >0 rule for the whole gap. Then send the report with “How to send a report” and pass `--state` so the clock updates.
+If they say no, stop. If they say yes, run a fresh report. `START` is `fetch_since` from that check (the end of the last report, or 24 hours ago when there is no report, and never more than 7 days). Pass it as `--since`. Use the same read budget as a daily run when the gap is under 24 hours, and the days-2-to-7 budget when it is longer. Likers are section 3. On a weekly-only setup, use the >0 rule for reposts and quotes for the whole gap. Then send the report with “How to send a report” and pass `--state` so the clock updates.
 
 ```bash
 python3 x_neighbours.py --now <T> --since <fetch_since> --snapshot-dir /workspace/content/followers --good-neighbours <path> --state <state path>

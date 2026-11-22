@@ -840,6 +840,19 @@ class Data:
         return likes, replies
 
 
+def is_plain_repost(post):
+    """A repost of someone else's post: RT @ text, or a retweeted reference."""
+    if not post:
+        return False
+    if (post.get("text") or "").startswith("RT @"):
+        return True
+    for ref in referenced(post):
+        kind = (ref.get("type") or "").replace("-", "_").lower()
+        if kind in {"retweeted", "retweet", "reposted", "repost"}:
+            return True
+    return False
+
+
 def is_original_post(post):
     """A catch-up post is their own writing: not a reply and not a plain repost.
 
@@ -850,20 +863,17 @@ def is_original_post(post):
     not this post's id. The last case is what the API sends when reply
     fields were not requested.
     """
-    if not post:
+    if not post or is_plain_repost(post):
         return False
     if post.get("in_reply_to_user_id"):
         return False
     for key in ("in_reply_to_tweet_id", "in_reply_to_status_id", "in_reply_to_post_id"):
         if post.get(key):
             return False
-    text = post.get("text") or ""
-    if text.startswith("RT @"):
-        return False
     kinds = set()
     for ref in referenced(post):
         kinds.add((ref.get("type") or "").replace("-", "_").lower())
-    if kinds & {"replied_to", "reply", "retweeted", "retweet", "reposted", "repost"}:
+    if kinds & {"replied_to", "reply"}:
         return False
     # A quote is their own post. Some payloads set conversation_id to the
     # quoted post; that must not throw the quote out.
@@ -914,6 +924,61 @@ def included_posts(doc):
 
 def like_count(post):
     return (post.get("public_metrics") or {}).get("like_count", 0) or 0
+
+
+def repost_count(post):
+    return (post.get("public_metrics") or {}).get("repost_count", 0) or 0
+
+
+# A liker file is short only at 10+ likes and under 80% saved. Smaller gaps
+# are the owner, suspended accounts, and people who unliked.
+TRUNCATED_LIKES_MIN = 10
+TRUNCATED_LIKES_RATIO = 0.8
+
+
+def saved_read_notes(data, since, now):
+    """Notes for liker and reposter files this window should already have.
+
+    There is no weekly-only setting. A Monday-after-daily week and a
+    weekly-only week both pass --windows week, so this uses the overlap:
+    the last 24 hours when the count is above 0, and the rest of the 7
+    days when the count is at least 3. Posts older than 7 days are not
+    checked. A plain repost is not fetched.
+    """
+    recent = now - timedelta(hours=24)
+    week = now - timedelta(days=7)
+    missing_likes = 0
+    missing_reposts = 0
+    truncated = []
+    for post in data.posts.values():
+        if is_plain_repost(post):
+            continue
+        if not data._in_window(post.get("created_at"), since, now):
+            continue
+        when = ts(post["created_at"])
+        if when >= recent:
+            minimum = 1
+        elif when >= week:
+            minimum = 3
+        else:
+            continue
+        pid = str(post["id"])
+        if like_count(post) >= minimum and pid not in data.likes:
+            missing_likes += 1
+        if repost_count(post) >= minimum and pid not in data.reposts:
+            missing_reposts += 1
+        want = like_count(post)
+        have = len(data.likes.get(pid, []))
+        if pid in data.likes and want >= TRUNCATED_LIKES_MIN and have < want * TRUNCATED_LIKES_RATIO:
+            truncated.append((pid, have, want))
+    lines = []
+    if missing_likes:
+        lines.append(f"likers not fetched for {missing_likes} posts with likes")
+    if missing_reposts:
+        lines.append(f"reposters not fetched for {missing_reposts} posts with reposts")
+    for pid, have, want in truncated:
+        lines.append(f"likers look truncated for post {pid} (saved {have} of {want})")
+    return lines
 
 
 def summary(user):
@@ -1924,6 +1989,8 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
     likes_c, reposts_c = Counter(), Counter()
     reply_c, quote_c = Counter(), Counter()
     for pid, post in data.posts.items():
+        if is_plain_repost(post):
+            continue
         if not data._in_window(post.get("created_at"), since, until):
             continue
         for uid in data.likes.get(pid, []):
@@ -2466,7 +2533,7 @@ def unfollow_lines(snapshot_dir, zone_name, since, now):
 
 def write_chat_report(activity, path, handle, since, now, label, top=10, items_per_user=3,
                       show=CHAT_SHOW, window="day", waiting_rule=None, snapshot_line=None,
-                      counts_lines=None, gone_lines=None):
+                      counts_lines=None, gone_lines=None, fetch_notes=None):
     totals = activity["totals"]
     people = activity["threads"] + activity["interactions"] + activity["catch_up"]
     legend = []
@@ -2481,6 +2548,8 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
         lines.append(" · ".join(legend))
     if snapshot_line:
         lines.append(snapshot_line)
+    for note in fetch_notes or []:
+        lines.append(note)
     lines.append("")
     flowers = activity["interactions"]
     if not flowers:
@@ -3158,11 +3227,12 @@ def main():
             counts_lines = counts_section_lines(
                 load_counts_csv(os.path.join(snapshot_dir, "counts.csv")))
             gone_lines = unfollow_lines(snapshot_dir, cfg.get("timezone"), since, now)
+        fetch_notes = saved_read_notes(data, since, now)
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),
             window=key, waiting_rule=waiting_rule, snapshot_line=snapshot_line,
-            counts_lines=counts_lines, gone_lines=gone_lines)
+            counts_lines=counts_lines, gone_lines=gone_lines, fetch_notes=fetch_notes)
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
@@ -3202,6 +3272,7 @@ def main():
             "open_items": open_path,
             "more_counts": {name: len(rows) for name, rows in more.items()},
             "thank_you": thanks,
+            "notes": fetch_notes,
             "messages": [
                 {"part": "sections_1_to_3", "text_file": md_path, "images": []},
                 {

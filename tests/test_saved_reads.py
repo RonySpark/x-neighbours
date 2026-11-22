@@ -44,6 +44,26 @@ def likes(folder, pid, people):
     })
 
 
+def reposts(folder, pid, people):
+    dump(folder, f"reposts_{pid}.json", {
+        "data": [user(uid, name) for uid, name in people],
+    })
+
+
+def quote_rows(folder, pid, count):
+    rows = []
+    for i in range(count):
+        qid = str(900000 + int(pid) * 100 + i)
+        rows.append({
+            "id": qid,
+            "author_id": qid,
+            "created_at": "2026-11-16T09:00:00Z",
+            "text": "a quote",
+            "conversation_id": qid,
+        })
+    dump(folder, f"quotes_{pid}.json", {"data": rows})
+
+
 def run_report(posts, windows, prepare=None):
     tmp = tempfile.mkdtemp(prefix="xn-saved-")
     data = os.path.join(tmp, "data")
@@ -156,6 +176,42 @@ class SavedReadNotesTest(unittest.TestCase):
             [note for note in day_payload["notes"] if note.startswith("quoters ")],
             ["quoters not fetched for 1 posts with quotes"],
         )
+
+    def test_short_reposter_and_quote_lists_use_the_liker_bar(self):
+        posts = [
+            post("50", "2026-11-16T08:00:00Z", reposts=10),
+            post("51", "2026-11-16T08:00:00Z", reposts=10),
+            post("52", "2026-11-16T08:00:00Z", reposts=9),
+            post("53", "2026-11-16T08:00:00Z", reposts=10),
+            post("60", "2026-11-16T08:00:00Z", quotes=10),
+            post("61", "2026-11-16T08:00:00Z", quotes=10),
+            post("62", "2026-11-16T08:00:00Z", quotes=9),
+            post(
+                "70", "2026-11-16T08:00:00Z", reposts=10, text="RT @other: borrowed",
+                referenced_tweets=[{"type": "retweeted", "id": "9"}],
+            ),
+        ]
+
+        def prepare(folder):
+            reposts(folder, "50", [(str(500 + i), f"r{i}") for i in range(7)])
+            reposts(folder, "51", [(str(600 + i), f"s{i}") for i in range(8)])
+            reposts(folder, "52", [("700", "one")])
+            reposts(folder, "70", [("701", "boost")])
+            quote_rows(folder, "60", 7)
+            quote_rows(folder, "61", 8)
+            quote_rows(folder, "62", 1)
+
+        report, payload = run_report(posts, "day", prepare)
+        self.assertIn("reposters look truncated for post 50 (saved 7 of 10)", report)
+        self.assertIn("reposters look truncated for post 50 (saved 7 of 10)", payload["notes"])
+        self.assertNotIn("post 51", report)
+        self.assertNotIn("post 52", report)
+        self.assertNotIn("post 53", report)
+        self.assertIn("quoters look truncated for post 60 (saved 7 of 10)", report)
+        self.assertIn("quoters look truncated for post 60 (saved 7 of 10)", payload["notes"])
+        self.assertNotIn("post 61", report)
+        self.assertNotIn("post 62", report)
+        self.assertNotIn("post 70", report)
 
 
 class PlainRepostScoreTest(unittest.TestCase):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Saved liker and reposter files, checked through the report the bot sends."""
+"""Saved liker, reposter, and quote files, checked through the report."""
 import json
 import os
 import subprocess
@@ -20,7 +20,7 @@ def user(uid, username):
     return {"id": uid, "name": username.title(), "username": username}
 
 
-def post(pid, created, likes=0, reposts=0, text="hello", **extra):
+def post(pid, created, likes=0, reposts=0, quotes=0, text="hello", **extra):
     row = {
         "id": pid,
         "author_id": "1",
@@ -31,6 +31,7 @@ def post(pid, created, likes=0, reposts=0, text="hello", **extra):
             "like_count": likes,
             "reply_count": 0,
             "repost_count": reposts,
+            "quote_count": quotes,
         },
     }
     row.update(extra)
@@ -120,6 +121,41 @@ class SavedReadNotesTest(unittest.TestCase):
         self.assertIn("likers look truncated for post 20 (saved 7 of 10)", report)
         self.assertNotIn("post 21", report)
         self.assertNotIn("post 22", report)
+
+    def test_missing_quote_file_follows_the_shared_budget(self):
+        posts = [
+            post("40", "2026-11-16T08:00:00Z", quotes=2),
+            post("41", "2026-11-13T12:00:00Z", quotes=2),
+            post("42", "2026-11-13T12:00:00Z", quotes=3),
+            post("43", "2026-11-16T08:00:00Z", quotes=1),
+            post("45", "2026-11-16T08:00:00Z", quotes=1),
+            post(
+                "44", "2026-11-16T08:00:00Z", quotes=4, text="RT @other: borrowed",
+                referenced_tweets=[{"type": "retweeted", "id": "9"}],
+            ),
+        ]
+
+        def prepare(folder):
+            dump(folder, "quotes_43.json", {"data": [{
+                "id": "430",
+                "author_id": "430",
+                "created_at": "2026-11-16T09:00:00Z",
+                "text": "quoting",
+                "conversation_id": "430",
+            }], "includes": {"users": [user("430", "quill")]}})
+            dump(folder, "quotes_45.json", {"data": []})
+
+        report, payload = run_report(posts, "week", prepare)
+        self.assertIn("quoters not fetched for 2 posts with quotes", report)
+        self.assertIn("quoters not fetched for 2 posts with quotes", payload["notes"])
+        self.assertNotIn("post 41", report)
+
+        day_report, day_payload = run_report(posts, "day", prepare)
+        self.assertIn("quoters not fetched for 1 posts with quotes", day_report)
+        self.assertEqual(
+            [note for note in day_payload["notes"] if note.startswith("quoters ")],
+            ["quoters not fetched for 1 posts with quotes"],
+        )
 
 
 class PlainRepostScoreTest(unittest.TestCase):

@@ -257,6 +257,37 @@ class SavedReadNotesTest(unittest.TestCase):
             [],
         )
 
+    def test_unscored_old_latest_file_is_not_noted(self):
+        posts = [post("10", "2026-11-16T08:00:00Z", likes=1)]
+        old = time.time() - 3 * 24 * 60 * 60
+
+        def page(folder, uid, text):
+            dump(folder, f"latest_{uid}.json", {
+                "data": [{
+                    "id": uid + "1",
+                    "author_id": uid,
+                    "created_at": "2026-11-10T08:00:00Z",
+                    "text": text,
+                    "conversation_id": uid + "1",
+                }],
+                "includes": {"users": [user(uid, "n" + uid)]},
+            })
+
+        def prepare(folder):
+            likes(folder, "10", [("703", "n703")])
+            page(folder, "703", "fresh page")
+            page(folder, "801", "old page")
+            os.utime(os.path.join(folder, "latest_801.json"), (old, old))
+
+        report, payload = run_report(posts, "day", prepare)
+        self.assertIn("fresh page", report)
+        self.assertNotIn("old page", report)
+        self.assertNotIn("look stale", report)
+        self.assertEqual(
+            [note for note in payload["notes"] if "stale" in note],
+            [],
+        )
+
 
 class PlainRepostScoreTest(unittest.TestCase):
     def test_plain_repost_likes_do_not_count(self):

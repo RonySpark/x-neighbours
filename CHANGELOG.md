@@ -8,7 +8,7 @@ python3 version.py
 
 ## Unreleased
 
-- A `latest_*` file saved on an earlier UTC day than the other saved files is noted. A file from that same day is not, and a directory with no newer file is not.
+- A `latest_*` file saved on an earlier UTC day than the other saved files is noted when that person is scored in this report. A file from that same day is not, a directory with no newer file is not, and a file the report does not score is not.
 - A saved reposter list or quote list uses the same short-list bar as likers: the file is present, the count is at least 10, and the saved rows are under 80% of that count.
 - The report notes a missing quote file for the same shared budget as likers and reposters: last 24 hours when `quote_count` is above 0, and the rest of the 7 days when it is at least 3. The duplicate shared-budget lines for reposts and quotes are removed from the runbook. Weekly-only still fetches every count above 0.
 - The report notes liker and reposter files the shared budget should already have: last 24 hours when the count is above 0, and the rest of the 7 days when it is at least 3. A liker file for a post with at least 10 likes is noted when under 80% of them were saved. A plain repost saved in `posts_*.json` does not add likes or reposts to the score.

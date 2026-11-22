@@ -944,7 +944,7 @@ def saved_list_is_short(have, want):
     return want >= TRUNCATED_MIN and have < want * TRUNCATED_RATIO
 
 
-def saved_read_notes(data, since, now):
+def saved_read_notes(data, since, now, scored_ids=()):
     """Notes for liker, reposter, and quote files this window should already have.
 
     There is no weekly-only setting. A Monday-after-daily week and a
@@ -995,6 +995,47 @@ def saved_read_notes(data, since, now):
         lines.append(f"quoters not fetched for {missing_quotes} posts with quotes")
     for label, pid, have, want in short:
         lines.append(f"{label} look truncated for post {pid} (saved {have} of {want})")
+    lines.extend(stale_latest_lines(data.data_dir, scored_ids))
+    return lines
+
+
+def stale_latest_lines(data_dir, scored_ids):
+    """Note a scored latest file saved on an earlier UTC day than the other files.
+
+    Files for people this report does not score are left over from an earlier
+    set and are not fetched again. A file from the same day is kept. With no
+    newer saved file, there is no later run to compare against.
+    """
+    scored = {str(uid) for uid in scored_ids}
+    if not scored:
+        return []
+    paths = [
+        path for path in glob.glob(os.path.join(data_dir, "*.json"))
+        if os.path.isfile(path)
+    ]
+    latest = []
+    others = []
+    for path in paths:
+        if os.path.basename(path).startswith("latest_"):
+            latest.append(path)
+        else:
+            others.append(path)
+    if not latest or not others:
+        return []
+    other_day = datetime.fromtimestamp(max(os.path.getmtime(path) for path in others), timezone.utc).date()
+    by_user = defaultdict(list)
+    for path in latest:
+        match = re.search(r"latest_(\d+)", os.path.basename(path))
+        if match:
+            by_user[match.group(1)].append(path)
+    lines = []
+    for uid in sorted(by_user, key=int):
+        if uid not in scored:
+            continue
+        newest = max(os.path.getmtime(path) for path in by_user[uid])
+        saved = datetime.fromtimestamp(newest, timezone.utc).date()
+        if saved < other_day:
+            lines.append(f"latest posts look stale for user {uid}")
     return lines
 
 
@@ -3244,7 +3285,10 @@ def main():
             counts_lines = counts_section_lines(
                 load_counts_csv(os.path.join(snapshot_dir, "counts.csv")))
             gone_lines = unfollow_lines(snapshot_dir, cfg.get("timezone"), since, now)
-        fetch_notes = saved_read_notes(data, since, now)
+        fetch_notes = saved_read_notes(
+            data, since, now,
+            scored_ids=[person["id"] for person in activity.get("catch_up") or []],
+        )
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),

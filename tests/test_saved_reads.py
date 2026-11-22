@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -212,6 +213,80 @@ class SavedReadNotesTest(unittest.TestCase):
         self.assertNotIn("post 61", report)
         self.assertNotIn("post 62", report)
         self.assertNotIn("post 70", report)
+
+    def test_stale_latest_file_is_noted_when_newer_saved_files_exist(self):
+        posts = [post("10", "2026-11-16T08:00:00Z", likes=1)]
+        old = time.time() - 3 * 24 * 60 * 60
+
+        def page(folder, uid, text):
+            dump(folder, f"latest_{uid}.json", {
+                "data": [{
+                    "id": uid + "1",
+                    "author_id": uid,
+                    "created_at": "2026-11-10T08:00:00Z",
+                    "text": text,
+                    "conversation_id": uid + "1",
+                }],
+                "includes": {"users": [user(uid, "n" + uid)]},
+            })
+
+        def prepare(folder):
+            likes(folder, "10", [("701", "n701"), ("702", "n702")])
+            page(folder, "701", "kept note")
+            page(folder, "702", "fresh note")
+            os.utime(os.path.join(folder, "latest_701.json"), (old, old))
+
+        report, payload = run_report(posts, "day", prepare)
+        self.assertIn("kept note", report)
+        self.assertIn("latest posts look stale for user 701", report)
+        self.assertIn("latest posts look stale for user 701", payload["notes"])
+        self.assertNotIn("user 702", report)
+
+        def prepare_same_day(folder):
+            likes(folder, "10", [("701", "n701")])
+            page(folder, "701", "kept note")
+            os.utime(os.path.join(folder, "latest_701.json"), (old, old))
+            os.utime(os.path.join(folder, "posts_1.json"), (old, old))
+            os.utime(os.path.join(folder, "likes_10.json"), (old, old))
+
+        same_day, same_payload = run_report(posts, "day", prepare_same_day)
+        self.assertIn("kept note", same_day)
+        self.assertNotIn("look stale", same_day)
+        self.assertEqual(
+            [note for note in same_payload["notes"] if "stale" in note],
+            [],
+        )
+
+    def test_unscored_old_latest_file_is_not_noted(self):
+        posts = [post("10", "2026-11-16T08:00:00Z", likes=1)]
+        old = time.time() - 3 * 24 * 60 * 60
+
+        def page(folder, uid, text):
+            dump(folder, f"latest_{uid}.json", {
+                "data": [{
+                    "id": uid + "1",
+                    "author_id": uid,
+                    "created_at": "2026-11-10T08:00:00Z",
+                    "text": text,
+                    "conversation_id": uid + "1",
+                }],
+                "includes": {"users": [user(uid, "n" + uid)]},
+            })
+
+        def prepare(folder):
+            likes(folder, "10", [("703", "n703")])
+            page(folder, "703", "fresh page")
+            page(folder, "801", "old page")
+            os.utime(os.path.join(folder, "latest_801.json"), (old, old))
+
+        report, payload = run_report(posts, "day", prepare)
+        self.assertIn("fresh page", report)
+        self.assertNotIn("old page", report)
+        self.assertNotIn("look stale", report)
+        self.assertEqual(
+            [note for note in payload["notes"] if "stale" in note],
+            [],
+        )
 
 
 class PlainRepostScoreTest(unittest.TestCase):

@@ -995,6 +995,41 @@ def saved_read_notes(data, since, now):
         lines.append(f"quoters not fetched for {missing_quotes} posts with quotes")
     for label, pid, have, want in short:
         lines.append(f"{label} look truncated for post {pid} (saved {have} of {want})")
+    lines.extend(stale_latest_lines(data.data_dir))
+    return lines
+
+
+def stale_latest_lines(data_dir):
+    """Note a latest file saved on an earlier UTC day than the other saved files.
+
+    A file from the same day is kept. With no newer saved file, there is no
+    later run to compare against.
+    """
+    paths = [
+        path for path in glob.glob(os.path.join(data_dir, "*.json"))
+        if os.path.isfile(path)
+    ]
+    latest = []
+    others = []
+    for path in paths:
+        if os.path.basename(path).startswith("latest_"):
+            latest.append(path)
+        else:
+            others.append(path)
+    if not latest or not others:
+        return []
+    other_day = datetime.fromtimestamp(max(os.path.getmtime(path) for path in others), timezone.utc).date()
+    by_user = defaultdict(list)
+    for path in latest:
+        match = re.search(r"latest_(\d+)", os.path.basename(path))
+        if match:
+            by_user[match.group(1)].append(path)
+    lines = []
+    for uid in sorted(by_user, key=int):
+        newest = max(os.path.getmtime(path) for path in by_user[uid])
+        saved = datetime.fromtimestamp(newest, timezone.utc).date()
+        if saved < other_day:
+            lines.append(f"latest posts look stale for user {uid}")
     return lines
 
 

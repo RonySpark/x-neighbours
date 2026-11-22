@@ -191,10 +191,8 @@ On a Grok Bot, posts, mentions, reposts, quotes, and `get_posts_by_ids` are on t
 
 Stay around **30 calls a minute** and **1,000 calls a day**. Send about 12 calls, then pause.
 
-Likes, reposts, and quotes are one call per post:
+Likes, reposts, and quotes are one call per post. The shared budget is the liker budget in the runbook. The report notes a missing file for that budget.
 
-- The last 24 hours: every post with that count above 0.
-- Days 2–7, when a daily run already covered day 1: only counts of 3 or more.
 - Weekly-only (no daily run that week): every post with that count above 0. Do not use the 3-or-more skip.
 - Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty. If that page is already all engaged, fetch one more page.
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.

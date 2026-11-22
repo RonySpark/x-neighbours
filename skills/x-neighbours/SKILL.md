@@ -140,7 +140,7 @@ Skip a post you already saved likers for earlier the same day.
 
 ### 4. Reposts and quote posts
 
-Same budget rule as likes, using `repost_count` and `quote_count` from the post's `public_metrics`. Last 24 hours: every post with that count above 0. Days 2–7 on a daily+Monday setup: only counts of 3 or more. Weekly-only: every post with that count above 0. Skip a file you already saved.
+Same budget rule as likes, using `repost_count` and `quote_count` from the post's `public_metrics`. Weekly-only: every post with that count above 0. Skip a file you already saved.
 
 `get_posts_reposted_by` — `id` the post id, `max_results` 100, `user.fields=username,name,description,public_metrics,profile_image_url`. Save as `reposts_<postid>`.
 

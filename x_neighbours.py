@@ -930,6 +930,10 @@ def repost_count(post):
     return (post.get("public_metrics") or {}).get("repost_count", 0) or 0
 
 
+def quote_count(post):
+    return (post.get("public_metrics") or {}).get("quote_count", 0) or 0
+
+
 # A liker file is short only at 10+ likes and under 80% saved. Smaller gaps
 # are the owner, suspended accounts, and people who unliked.
 TRUNCATED_LIKES_MIN = 10
@@ -937,7 +941,7 @@ TRUNCATED_LIKES_RATIO = 0.8
 
 
 def saved_read_notes(data, since, now):
-    """Notes for liker and reposter files this window should already have.
+    """Notes for liker, reposter, and quote files this window should already have.
 
     There is no weekly-only setting. A Monday-after-daily week and a
     weekly-only week both pass --windows week, so this uses the overlap:
@@ -949,6 +953,7 @@ def saved_read_notes(data, since, now):
     week = now - timedelta(days=7)
     missing_likes = 0
     missing_reposts = 0
+    missing_quotes = 0
     truncated = []
     for post in data.posts.values():
         if is_plain_repost(post):
@@ -967,6 +972,8 @@ def saved_read_notes(data, since, now):
             missing_likes += 1
         if repost_count(post) >= minimum and pid not in data.reposts:
             missing_reposts += 1
+        if quote_count(post) >= minimum and pid not in data.quotes:
+            missing_quotes += 1
         want = like_count(post)
         have = len(data.likes.get(pid, []))
         if pid in data.likes and want >= TRUNCATED_LIKES_MIN and have < want * TRUNCATED_LIKES_RATIO:
@@ -976,6 +983,8 @@ def saved_read_notes(data, since, now):
         lines.append(f"likers not fetched for {missing_likes} posts with likes")
     if missing_reposts:
         lines.append(f"reposters not fetched for {missing_reposts} posts with reposts")
+    if missing_quotes:
+        lines.append(f"quoters not fetched for {missing_quotes} posts with quotes")
     for pid, have, want in truncated:
         lines.append(f"likers look truncated for post {pid} (saved {have} of {want})")
     return lines

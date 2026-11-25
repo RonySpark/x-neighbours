@@ -31,7 +31,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import rules
 import version as version_mod
@@ -96,11 +96,17 @@ def load_build(repo):
     return doc if isinstance(doc, dict) else {}
 
 
-def waiver_path(doc):
+def waiver_raw(doc):
+    """The waiver path as written in build.json, before it is checked."""
     waiver = doc.get("founding_waiver") if isinstance(doc, dict) else None
     if not isinstance(waiver, dict):
         return ""
-    return str(waiver.get("submission") or "").strip().lstrip("./")
+    return str(waiver.get("submission") or "").strip()
+
+
+def waiver_path(doc):
+    """Exact safe waiver path. Unsafe or empty config matches nothing."""
+    return rules.clean_relpath(waiver_raw(doc))
 
 
 def period_bounds(now, days):
@@ -208,10 +214,10 @@ def normalize_counts(payload):
             "user_id": str(item.get("user_id") or item.get("id") or ""),
             "handle": str(item.get("handle") or item.get("username") or "").lstrip("@"),
             "name": item.get("name") or "",
-            "replies": int(interactions.get("replies") or 0),
-            "quotes": int(interactions.get("quotes") or 0),
-            "reposts": int(interactions.get("reposts") or 0),
-            "likes": int(interactions.get("likes") or 0),
+        "replies": interactions.get("replies") if interactions.get("replies") is not None else 0,
+        "quotes": interactions.get("quotes") if interactions.get("quotes") is not None else 0,
+        "reposts": interactions.get("reposts") if interactions.get("reposts") is not None else 0,
+        "likes": interactions.get("likes") if interactions.get("likes") is not None else 0,
             "first_seen": item.get("first_seen") or "",
             "last_seen": item.get("last_seen") or "",
             "note": item.get("note") or "",
@@ -264,10 +270,14 @@ def _require_object(report, value, label):
 
 
 def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
-                      banned=None, waiver=None):
-    """Append errors for one submission document. relpath is repo-relative."""
+                      banned=None, waiver=None, now=None):
+    """Append errors for one submission document. relpath is repo-relative.
+
+    now is the clock for future timestamps. It defaults to the current UTC time.
+    """
     opted_out = set(opted_out or [])
     banned = set(banned or [])
+    clock = datetime.now(timezone.utc) if now is None else rules.parse_time(now)
     if not isinstance(doc, dict):
         report.add("schema", "submission must be a JSON object")
         return
@@ -305,6 +315,8 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
     except (TypeError, ValueError):
         report.add("schema", "submitted_at must be a UTC timestamp")
         submitted = ""
+    if submitted and rules.parse_time(submitted) > clock:
+        report.add("future", "submitted_at is in the future")
     if match and submitted:
         try:
             stamped = rules.stamp_to_iso(stamp)
@@ -363,15 +375,23 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
     if not _require_object(report, period, "period"):
         period = {}
     try:
-        days = rules.period_days(period.get("from"), period.get("to"))
+        start_at = rules.parse_time(period.get("from"))
+        end_at = rules.parse_time(period.get("to"))
+        if end_at <= start_at:
+            raise ValueError("period ends before it starts")
+        days = rules.period_days(start_at, end_at)
     except (TypeError, ValueError):
         report.add("schema", "period from and to must be UTC timestamps")
         days = None
-    if days is not None and (days < rules.MIN_PERIOD_DAYS or days > rules.MAX_PERIOD_DAYS):
+        start_at = None
+        end_at = None
+    if days is not None and not rules.period_within_bounds(start_at, end_at):
         report.add(
             "schema",
             f"period must cover {rules.MIN_PERIOD_DAYS} to {rules.MAX_PERIOD_DAYS} days",
         )
+    if start_at is not None and (start_at > clock or end_at > clock):
+        report.add("future", "period must not extend into the future")
 
     if previous_at and submitted:
         allowed, nxt = rules.submission_allowed(submitted, previous_at)
@@ -422,9 +442,12 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
                 report.add("eligibility", f"{row_handle or user_id} does not meet the {reason} rule")
         for field in ("first_seen", "last_seen"):
             try:
-                rules.parse_time(row.get(field))
+                seen_at = rules.parse_time(row.get(field))
             except (TypeError, ValueError):
                 report.add("schema", f"{where} {field} must be a UTC timestamp")
+            else:
+                if seen_at > clock:
+                    report.add("future", f"{where} {field} is in the future")
         problem = rules.note_problem(row["note"]) if "note" in row else ""
         if problem:
             report.add("note", f"{where} {problem}")
@@ -462,7 +485,7 @@ def previous_submission_at(repo, owner_id, ignore_relpath=""):
     return rules.iso(latest) if latest else None
 
 
-def validate_file(path, repo, relpath=None):
+def validate_file(path, repo, relpath=None, now=None):
     report = Report()
     if relpath is None:
         relpath = os.path.relpath(path, repo).replace(os.sep, "/")
@@ -487,7 +510,7 @@ def validate_file(path, repo, relpath=None):
     validate_document(
         doc, relpath, report, previous_at=previous,
         opted_out=opted_out_ids(repo), banned=banned_owner_ids(repo),
-        waiver=waiver_path(build),
+        waiver=waiver_path(build), now=now,
     )
     return report
 
@@ -539,10 +562,20 @@ def validate_changes(repo, changes, labels=None, base_waiver=None, head_waiver=N
         else:
             other.append(change)
 
-    head = head_waiver if head_waiver is not None else waiver_path(load_build(repo))
+    if head_waiver is None:
+        head_waiver = waiver_raw(load_build(repo))
     if base_waiver is None:
-        base_waiver = head
-    waiver_changed = str(base_waiver or "") != str(head or "")
+        base_waiver = head_waiver
+    base_text = str(base_waiver or "").strip()
+    head_text = str(head_waiver or "").strip()
+    waiver_changed = base_text != head_text
+    for raw in (base_text, head_text):
+        if raw and not rules.clean_relpath(raw):
+            report.add(
+                "waiver",
+                "founding waiver path must be an exact path inside the repository",
+            )
+            break
     if waiver_changed and rules.MAINTAINER_WAIVER_LABEL not in labels:
         report.add(
             "waiver",
@@ -844,7 +877,7 @@ def run(args):
         head_doc = load_build(args.repo)
         payload = validate_changes(
             args.repo, changes, labels=args.labels.split(","),
-            base_waiver=waiver_path(base_doc), head_waiver=waiver_path(head_doc),
+            base_waiver=waiver_raw(base_doc), head_waiver=waiver_raw(head_doc),
         )
         emit(payload)
         return 0 if payload["ok"] else 1

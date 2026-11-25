@@ -32,7 +32,8 @@ def release_document(repo, when, changelog, source_commit, min_compatible=None):
     parsed = assert_monday(when)
     number = version_mod.version(os.path.join(repo, "VERSION"))
     minimum = min_compatible or number
-    version_mod.parse_semver(minimum)
+    if version_mod.parse_semver(minimum) > version_mod.parse_semver(number):
+        raise ValueError("min_compatible_version cannot be newer than the release")
     if not str(changelog or "").strip():
         raise ValueError("a Monday release needs a changelog line")
     return {

@@ -234,10 +234,26 @@ def check_update(community_on, local_version, latest, declined_version=None, for
                 "error": "versions/latest.json has no version"}
     remote = str(latest["version"])
     minimum = str(latest.get("min_compatible_version") or remote)
-    newer = version_mod.is_newer(remote, local_version)
+    try:
+        remote_parts = version_mod.parse_semver(remote)
+        local_parts = version_mod.parse_semver(local_version)
+        minimum_parts = version_mod.parse_semver(minimum)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "mode": "community",
+            "check": True,
+            "read_versions": True,
+            "ask": False,
+            "upgrade": False,
+            "pull": False,
+            "executed": False,
+            "error": str(exc),
+        }
+    newer = remote_parts > local_parts
     declined = (not force) and declined_version and str(declined_version) == remote
     ask = bool(newer and not declined)
-    behind = version_mod.is_newer(minimum, local_version)
+    behind = minimum_parts > local_parts
     message = ""
     if ask:
         message = f"Version {remote} is out. {latest.get('changelog') or ''} Upgrade?"

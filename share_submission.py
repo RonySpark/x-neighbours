@@ -526,12 +526,16 @@ def validate_changes(repo, changes, labels=None, base_waiver=None, head_waiver=N
     """Check a pull request's file list. Does not merge or comment."""
     report = Report()
     labels = {item.strip() for item in (labels or []) if item and item.strip()}
-    share_changes = []
+    neighbours_changes = []
     other = []
     for change in changes:
         path = change.get("path") or ""
-        if path.startswith("submissions/") or path.startswith("founding/"):
-            share_changes.append(change)
+        # Docs such as founding/README.md are not submission history.
+        # Only a .neighbours file under submissions/ or founding/ is.
+        if path.endswith(".neighbours") and (
+            path.startswith("submissions/") or path.startswith("founding/")
+        ):
+            neighbours_changes.append(change)
         else:
             other.append(change)
 
@@ -546,10 +550,10 @@ def validate_changes(repo, changes, labels=None, base_waiver=None, head_waiver=N
         )
 
     added_submissions = [
-        change for change in share_changes
+        change for change in neighbours_changes
         if change.get("status") == "A" and rules.SUBMISSION_RE.fullmatch(change.get("path") or "")
     ]
-    bad_share = [change for change in share_changes if change not in added_submissions]
+    bad_share = [change for change in neighbours_changes if change not in added_submissions]
     for change in bad_share:
         report.add("history", f"submission files are append-only ({change.get('path')})")
 

@@ -211,6 +211,18 @@ class SubmissionTest(unittest.TestCase):
         share.write_json(path, doc)
         self.assertTrue(any(item["code"] == "proof" for item in share.validate_file(path, self.repo, relpath).errors))
 
+    def test_docs_under_share_folders_are_not_submission_history(self):
+        changes = [
+            {"status": "A", "path": "founding/README.md"},
+            {"status": "A", "path": "submissions/README.md"},
+            {"status": "A", "path": "global/build.json"},
+            {"status": "M", "path": "README.md"},
+        ]
+        payload = share.validate_changes(
+            self.repo, changes, labels=[], base_waiver="", head_waiver="")
+        self.assertTrue(payload["ok"], payload["errors"])
+        self.assertFalse(payload["share"])
+
     def test_share_pr_cannot_change_the_waiver(self):
         relpath, _doc = write_submission(
             self.repo, "100", "example_owner", NOW, [person(201, "ex_neighbour")])

@@ -34,6 +34,8 @@ Open a pull request against `main`. The body includes a line `Closes #N`, where 
 
 Never merge. Never enable auto-merge. Never run a merge command. The owner reviews and merges.
 
+Share-list pull requests are not this flow. Neighbour Dog reviews and merges those. See [skills/neighbour-dog/SKILL.md](../neighbour-dog/SKILL.md). A community release updates `versions/` only on Monday (UTC). Docs still do not copy the number out of [`VERSION`](../../VERSION). `versions/latest.json` is the Monday pointer and is the one other file that carries it.
+
 ## Personal data
 
 Never commit personal data. Never commit or push `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `good_neighbours.json`, or `state.json`. Never commit real handles, real names, user ids, post text, avatars, or tokens. The fictional samples under `examples/` are the only account-shaped data that belongs in git. Never run `git add .`.

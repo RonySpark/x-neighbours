@@ -58,7 +58,7 @@ class VersionTest(unittest.TestCase):
                     continue
                 path = os.path.join(dirpath, name)
                 rel = os.path.relpath(path, ROOT)
-                if rel == "VERSION":
+                if rel == "VERSION" or rel.startswith("versions" + os.sep) or rel.startswith("versions/"):
                     continue
                 try:
                     text = read(path)

@@ -22,6 +22,19 @@ def version(path=None):
     return body
 
 
+def parse_semver(text):
+    """major.minor.patch as a tuple. A leading v, or any other text, is refused."""
+    body = (text or "").strip()
+    if not SEMVER.fullmatch(body):
+        raise ValueError("version must be major.minor.patch")
+    return tuple(int(part) for part in body.split("."))
+
+
+def is_newer(remote, local):
+    """True when the remote version is a higher major.minor.patch than local."""
+    return parse_semver(remote) > parse_semver(local)
+
+
 def main():
     try:
         print(version())

@@ -1,0 +1,78 @@
+---
+name: x-neighbours-share
+description: >-
+  Share an eligible good neighbours list to the X Neighbours repo. Use when a
+  community owner asks to share their neighbours. Never use it in individual
+  mode, and never follow or post on X.
+---
+
+# X Neighbours — share a list
+
+You help a community owner publish neighbours who already talk with them. Recommendations are discovery only. You do not follow anyone, you do not promise a follow back, and you do not post the proof code or the picture. The owner does those in X.
+
+Rules: [`RULES.md`](../../RULES.md). Checker: `share_submission.py`. Community flag: [`skills/x-neighbours-community/SKILL.md`](../x-neighbours-community/SKILL.md).
+
+## Before you build anything
+
+1. `python3 community.py --file <community path> status`. If `community` is false, say sharing is part of community mode and offer to join. Do not build a file.
+2. If `pending_pr` is set, tell them that pull request is still open. Do not open another. If they say it was rejected, run `python3 community.py --file <community path> share-result --state rejected` and continue.
+3. Fetch the latest submission time without upgrading the bot: `git fetch origin main`, then read submission times under `submissions/<their user id>/` on `origin/main`. Also pass `--previous` when `last_submitted_at` is set and `share_state` is `open` or `merged`.
+
+```bash
+python3 share_submission.py next-allowed --repo . --owner-id <id> --now <T> --previous <ISO or omit>
+```
+
+If `allowed` is false, tell them `next_allowed_at` and stop.
+
+## Build the list
+
+Use the saved JSON in `data/`, the same counts as the picture. Default period is 90 days. If they ask for a shorter window, `--days` may be from 7 to 93. Do not invent accounts. Do not use only the 20-person catch-up list.
+
+```bash
+python3 share_submission.py from-data \
+  --data data \
+  --owner-id <id> \
+  --owner-handle <handle> \
+  --now <T> \
+  --days 90 \
+  --out <store>/share-draft.neighbours
+```
+
+Show the handles and counts from the draft. They may remove names. Run `prepare` again with `--drop <id>` repeated, and the same `--code` the draft already has, only if you still have the counts file. A simpler path: edit nothing by hand. If they name someone to drop, call `from-data` again with `--drop`.
+
+A note, when they ask for one, is `--note <id>=<text>` on `prepare` (140 characters, no link, no @mention, no follow bargain). Tags are `--tag <id>=<word>`, at most three.
+
+The draft’s `post_text` is what they post from their own account:
+
+```text
+Verifying my X Neighbours list. Code: XN-________
+```
+
+Tell them to post that text themselves and send you the post id. You do not post it. You do not open x.com to log them in.
+
+When they send the post id:
+
+```bash
+python3 share_submission.py finalize --draft <store>/share-draft.neighbours --proof-post <id>
+python3 share_submission.py validate-file <store>/share-draft.neighbours --repo .
+```
+
+If validation fails, explain the `errors` in plain language and stop. Do not open a pull request.
+
+## Open the pull request
+
+The pull request adds one file: `submissions/<user id>/<timestamp>.neighbours`. It does not change `global/build.json`, `versions/`, or older submissions.
+
+```bash
+python3 share_submission.py open-pr --file <store>/share-draft.neighbours
+```
+
+The token is `X_NEIGHBOURS_GITHUB_TOKEN` in the environment, not an argument. If `opened` is false, do not pretend the pull request exists. Give them the file path and the share issue template only if they want to file it themselves. If `opened` is true, tell them the `url` in one line and record it:
+
+```bash
+python3 community.py --file <community path> record-share --at <submitted_at> --pending-url <url>
+```
+
+Say that Neighbour Dog reviews it, and that one owner is not enough for the global list unless the maintainer later points the founding waiver at this exact file. You do not set that waiver.
+
+When they say a pull request merged, run `share-result --state merged`.

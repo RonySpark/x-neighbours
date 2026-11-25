@@ -22,7 +22,7 @@ The first run covers the last two days, so it loads quickly. Every report includ
 
 People the owner does not follow are marked 👤?. There is no followed/unfollowed split. Catch up with your good neighbours lists each person's latest original post (not a reply or a plain repost; a quote of their own counts) that the owner has not already liked, replied to, reposted, or quoted. The age is that post's `created_at` against the current UTC time. People with none left in the saved page are skipped. If nothing is left to show, the section says you're all caught up. When the owner has a good neighbours list, that section shows only those people. When the list is empty, it stays the top people from the period and adds one hint line. A ⭐ marks a good neighbour in the other sections too. The ordering score stays in config and is not printed.
 
-The thank-you sentence is “My X neighbours circle, November 5!” plus a short thanks, using the report date in `timezone` (UTC if that key is blank). It does not mention any username.
+The thank-you sentence is “My X neighbours circle, November 5!” plus a short thanks, using the report date in `timezone` (UTC if that key is blank). It does not mention any username. Community mode, which is off unless the owner opts in, adds one reminder to tag @SkyXFunNext when they post the picture. The bot still does not post it. Individual mode does not add that line.
 
 Every report has four parts, written so a phone can read them without sideways scrolling. The header is two lines: the period (`Since your last report · 30 min ago`, `Last 24 hours`, `Last 7 days`, or `First report · last 2 days`), then emoji counts only (`💬 3 · 🔁💬 0 · ❤️ 0 · 🔁 0`). The sections are 💐 Flowers, 🏡 What's new, 👋 Replies, then Thank your neighbours on X. The first three show five entries and say how many are left. The house-framed picture sits in that last message with the thank-you words. The link does not attach the picture; the owner saves it and attaches it in X. Profile photos are kept as metadata and are not placed in the chat text. The original three-ring layout is unchanged, and every avatar, including the centre, sits in a simple house frame. `--no-picture` skips the image.
 
@@ -71,12 +71,69 @@ What changed is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Upgrading an installed bot
 
-The clone and `config.json` stay where they are. The good neighbours list and the report clock stay in the bot store.
+The clone and `config.json` stay where they are. The good neighbours list and the report clock stay in the bot store. Nothing pulls on a schedule.
+
+Individual mode does not check `versions/` and does not download the global list. When the owner asks to update, use the steps below. Community mode asks first, on the Monday check, and runs these steps only after the owner says yes.
 
 1. From the clone, run `python3 version.py` and keep the line.
 2. `git pull --ff-only`. When `requirements.txt` changed, run `python3 -m pip install -r requirements.txt`. Leave `config.json` and `data/` uncommitted.
 3. Run `python3 version.py` again. When the line changed, read [CHANGELOG.md](CHANGELOG.md).
-4. Leave `good_neighbours.json` and `state.json` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
+4. Leave `good_neighbours.json`, `state.json`, `community.json`, and `global_neighbours.neighbours` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
+
+## Community mode
+
+Community mode is off by default. An individual bot keeps the local reports and the picture. It does not check for a new version, does not download recommendations, and does not open a share pull request.
+
+An owner who joins gets:
+
+- a Sunday reminder, in their report timezone, that they can share when 7 days have passed, and that a feature release may land on Monday
+- a Monday check of `versions/latest.json` against the local `VERSION`. If the GitHub version is newer, the bot asks before `git pull`. It never upgrades in the background
+- a local copy of `global/neighbours.global.neighbours`, saved on that Monday check as `global_neighbours.neighbours` in the bot store
+- the option to share an eligible list, described in [RULES.md](RULES.md)
+- a reminder, when they post the picture, to include @SkyXFunNext so it can be reposted. If that is already the posting account, the reminder is skipped
+
+Leaving community mode stops those behaviours. A list already merged stays public until the person files an [opt-out](.github/ISSUE_TEMPLATE/opt-out.md).
+
+The runbooks are [skills/x-neighbours-community/SKILL.md](skills/x-neighbours-community/SKILL.md) and [skills/x-neighbours-share/SKILL.md](skills/x-neighbours-share/SKILL.md).
+
+## Shared recommendations
+
+A share file is `submissions/<x user id>/<UTC timestamp>.neighbours`. JSON inside, one new file per pull request, at most once every 7 days. The score is the picture score: likes + reposts + 3 × (replies + quotes). The minimum is `max(8, ceil(50 × period_days / 90))` (50 over 90 days, 8 over 7). Replies plus quotes must be at least 2. The cap is 100. The default period is 90 days. An owner may use 7 to 93 days and may remove names. They cannot add people the counts did not produce.
+
+The global file lists an account after two owners recommend it. `recommended_by` records who, when, and which file. Opt-outs and banned owners are applied on rebuild.
+
+### Founding list
+
+The global file is empty until submissions arrive. One path, set in `global/build.json` under `founding_waiver.submission`, may populate the list from a single file. That path is blank in this repo. After a new bot submits through the normal share flow and the file is merged, the maintainer sets `submission` to that exact path, keeps `owner_id` as `founding` and `owner_handle` as `founding-submission`, and labels the pull request `maintainer-waiver`. The displayed credit is that neutral identity, not the test bot and not a personal handle. Any other file still needs two recommendations. Details are in [founding/README.md](founding/README.md).
+
+### How reviews work
+
+The Action “Validate share submissions” checks shape, size, the 7-day gap, eligibility math, self-listing, and notes. [Neighbour Dog](skills/neighbour-dog/SKILL.md) is a separate reviewer bot with its own GitHub account. It merges a clean share, rejects a clear failure, and flags borderline cases (a first-time owner, a spike, a possible boost ring, a new account) with the label `needs-maintainer`. It does not edit the global file. A rebuild Action writes `global/neighbours.global.neighbours` after merges. That rebuild can happen any day and does not change `versions/latest.json`.
+
+`versions/latest.json` moves only on a Monday release. The maintainer runs the “Monday release” workflow, which refuses any other UTC weekday. It reads the number from `VERSION`, writes `versions/latest.json` and `versions/<version>.json`, tags, and opens a GitHub Release. The bot’s Monday message is the announcement owners see. There is no mailing list.
+
+### What the maintainer configures
+
+These are not in the repo, because they are accounts and secrets:
+
+1. A GitHub account for Neighbour Dog, with Write or Maintain on this repo, so reviews are not under a personal account. Create the labels `needs-maintainer` and `maintainer-waiver`.
+2. A fine-grained personal access token for that account (contents and pull requests). Store it as the Actions secret `NEIGHBOUR_DOG_TOKEN`. Until it is set, the Neighbour Dog workflow still prints a decision and does not merge. The validate check still runs.
+3. Branch protection on `main`: require the check “Validate share submissions”. Let Neighbour Dog merge share pull requests that pass. Do not require a personal review on those. Allow `github-actions[bot]` to push `global/neighbours.global.neighbours`, or the rebuild workflow cannot commit. Code pull requests stay for the owner to review.
+4. Optional: `X_NEIGHBOURS_GITHUB_TOKEN` on a community owner’s bot, so that bot can open the share pull request. Without it, the bot writes the file and the owner opens the pull request. Do not use a personal maintainer token for that if the pull request should not show a personal account.
+5. The first founding submission is flagged as a first-time owner. The maintainer reviews it, merges it, then sets the waiver path as above.
+
+### Try it with a new bot
+
+1. Install a new bot from the current `main` (or pull an existing one and opt in).
+2. On the first report the bot asks once about community mode. Say yes.
+3. Run reports until `data/` has real interactions. Ask the bot to share. The default window is 90 days. A short test can ask for 7 days when that week meets the lower bar (score at least 8, and at least two replies or quotes).
+4. Post the one-time code from the X account yourself. Give the bot the post id. The bot does not post.
+5. Open the pull request (the bot does this when `X_NEIGHBOURS_GITHUB_TOKEN` is set; otherwise take the file it wrote). It must be the only new file, under `submissions/<user id>/`.
+6. Wait for the validate check. Neighbour Dog flags a first-time owner, so review that pull request and merge it yourself if it looks right.
+7. The rebuild leaves the global list unchanged, because one owner is not enough while the waiver path is empty. Confirm the new account is absent.
+8. Set `founding_waiver.submission` to that exact file path. Keep the neutral `owner_id` and `owner_handle`. Label the pull request `maintainer-waiver` and merge it.
+9. The rebuild loads that one file. Those neighbours appear with `source` `founding` and `recommended_by` the neutral identity. A second bot’s new name stays out until another owner lists it too.
+10. On Monday, a community bot compares versions and, if nothing is newer, just refreshes `global_neighbours.neighbours` in its store. Posting the picture reminds the owner to tag @SkyXFunNext.
 
 ## Config
 
@@ -99,7 +156,8 @@ The clone and `config.json` stay where they are. The good neighbours list and th
   "report": "both",
   "per_post": false,
   "per_day": false,
-  "timezone": ""
+  "timezone": "",
+  "community": false
 }
 ```
 
@@ -116,7 +174,8 @@ The clone and `config.json` stay where they are. The good neighbours list and th
 | `theme` | `midnight` (default), `light`, or `sunset` |
 | `windows` | `week` by default. `day` is the daily report |
 | `top` | How many people are ranked for Flowers and for Catch up when the good neighbours list is empty. The chat still shows five at a time. Default 10 |
-| `timezone` | IANA name for the thank-you date, such as `Europe/Stockholm`. Blank means UTC |
+| `timezone` | IANA name for the thank-you date and the Sunday reminder, such as `Europe/Stockholm`. Blank means UTC. Monday release times in `versions/` are UTC |
+| `community` | Optional mirror of community mode. The live flag is `community.json` in the bot store, default off. Individual mode does not read `versions/` or the global list |
 | `fresh_hours` | Optional. How many hours until the bot may offer a new report. Omit it and the bot estimates: 1 hour at 60 or more interactions a day, 3 hours from 15 to 59, 8 hours under 15 |
 | `good_neighbours` | Optional path to the personal list. Prefer `--good-neighbours`, because the file lives outside the repo. A missing file is an empty list. At most 20 people |
 | `report` | `both` (default), `likes`, or `replies` |
@@ -224,7 +283,7 @@ GitHub Actions runs `python3 -m unittest discover -s tests -v` and this offline 
 
 ## Privacy
 
-- `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, and a `good_neighbours.json` or `state.json` copied into the repo root are gitignored. Leave them that way. The real list and the report clock belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked.
+- `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, and a `good_neighbours.json`, `state.json`, `community.json`, or `global_neighbours.neighbours` copied into the repo root are gitignored. Leave them that way. The real list, the report clock, and community mode belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked. Public share files under `submissions/` are the exception, and they go through a pull request.
 - Real avatars are downloaded from the `profile_image_url` values in the saved JSON into `.avatar_cache/` next to the output folder.
 - Do not commit a creator's config, raw responses, avatar cache, reports, or pictures, and do not open a pull request that contains them.
 - The sample dataset is the only account data in this repo, and it is not from X.
@@ -248,6 +307,23 @@ GitHub Actions runs `python3 -m unittest discover -s tests -v` and this offline 
 | `skills/x-neighbours/SKILL.md` | Runbook for the bot |
 | `BOT.md` | Pointer to that runbook |
 | `skills/x-neighbours-maintain/SKILL.md` | How a contributor's bot changes this repo |
+| `skills/x-neighbours-community/SKILL.md` | Opt-in community mode, Sunday reminder, Monday check |
+| `skills/x-neighbours-share/SKILL.md` | Share an eligible list |
+| `skills/neighbour-dog/SKILL.md` | Review and merge share pull requests |
+| `RULES.md` | Eligibility and share rules |
+| `rules.py`, `rules.json` | The same rules, for the checker |
+| `share_submission.py` | Build and validate a `.neighbours` file |
+| `global_build.py` | Rebuild the global list. Does not touch `versions/` |
+| `community.py` | Join, leave, reminders, version check, local save |
+| `neighbour_dog.py` | Merge, reject, or flag decision |
+| `versions_release.py` | Write `versions/latest.json` on Monday only |
+| `global/build.json` | Two-recommendation rule and the one founding waiver path |
+| `global/neighbours.global.neighbours` | Rebuilt recommendation list |
+| `versions/latest.json` | Monday release pointer |
+| `submissions/` | Public share files, one new file per pull request |
+| `founding/README.md` | How to point the waiver once a file exists |
+| `opted-out/` | Accounts removed from the global list |
+| `schemas/` | JSON shapes for a submission, the global list, and a release |
 | `examples/sample/` | Fictional data and generated avatars |
 | `docs/sample-report.png` | Sample report picture, fictional people |
 | `docs/sample-report.html` | HTML source for that picture |

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Skybatan/x-neighbours/schemas/global.schema.json",
+  "title": "X Neighbours global list",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "generated_at",
+    "source_commit",
+    "rules_version",
+    "min_recommendations",
+    "submission_interval_days",
+    "neighbours",
+    "owners",
+    "opted_out",
+    "banned_owners"
+  ],
+  "properties": {
+    "format": {"const": "x-neighbours-global"},
+    "version": {"const": 1},
+    "generated_at": {"type": "string"},
+    "source_commit": {"type": "string"},
+    "rules_version": {"type": "string"},
+    "min_recommendations": {"const": 2},
+    "submission_interval_days": {"const": 7},
+    "neighbours": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/entry"}
+    },
+    "owners": {"type": "object"},
+    "opted_out": {"type": "array", "items": {"type": "string"}},
+    "banned_owners": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "user_id",
+        "handle",
+        "source",
+        "recommendation_count",
+        "recommended_by",
+        "first_recommended",
+        "last_recommended",
+        "tags"
+      ],
+      "properties": {
+        "user_id": {"type": "string"},
+        "handle": {"type": "string"},
+        "source": {"enum": ["founding", "community"]},
+        "recommendation_count": {"type": "integer", "minimum": 1},
+        "recommended_by": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["owner_id", "owner_handle", "recommended_at", "submission"],
+            "properties": {
+              "owner_id": {"type": "string"},
+              "owner_handle": {"type": "string"},
+              "recommended_at": {"type": "string"},
+              "submission": {"type": "string"}
+            }
+          }
+        },
+        "first_recommended": {"type": "string"},
+        "last_recommended": {"type": "string"},
+        "tags": {"type": "object"}
+      }
+    }
+  }
+}

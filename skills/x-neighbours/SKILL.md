@@ -19,7 +19,9 @@ You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every ru
 - Refresh follower and following lists **at most once a week**. Reuse `data/followers_*.json` and `data/following_*.json` when they are under 7 days old.
 - This run is **read-only**. Never follow, unfollow, like, unlike, repost, bookmark, post, reply, or DM. Never open a GitHub issue yourself. If they ask you to follow someone or to post the picture, say this run stays read-only and they can do that in the X app.
 - Leave bot accounts out. `@grok` is already in `exclude`. They can name other handles to skip anytime.
-- Never commit user data. Do not commit or push `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `good_neighbours.json`, or `state.json`. Do not open a pull request with those files. Do not run `git add .`. For a normal run, commit nothing. `git pull` is fine: those paths are gitignored. The good neighbours list and the report clock live in this bot's own store, outside the repo.
+- Never commit user data. Do not commit or push `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, `good_neighbours.json`, `state.json`, `community.json`, or `global_neighbours.neighbours`. Do not open a pull request with those files. Do not run `git add .`. For a normal run, commit nothing. `git pull` is fine when the owner asked to upgrade: those paths are gitignored. The good neighbours list, the report clock, and community mode live in this bot's own store, outside the repo.
+- Community mode is off until the owner opts in. The steps are in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md). Individual mode does not check `versions/`, does not download the global list, does not share, and does not mention `@SkyXFunNext`.
+- A community share is the only time you open a GitHub pull request, and only for one submission file, and only by [skills/x-neighbours-share/SKILL.md](../x-neighbours-share/SKILL.md). You still never open a GitHub issue yourself. You still never post, follow, or repost on X.
 - Stay on this task. Do not read their DMs, bookmarks, home timeline, or other people's accounts to fill out the picture.
 - If the X tools are missing, ask the owner to connect X in this chat. Do not ask for a password, API key, or bearer token, and do not open x.com to log them in.
 
@@ -27,12 +29,14 @@ Weights are a quiet setting. The meaning of `like_weight` and `reply_weight` liv
 
 ## Upgrading
 
-An already-installed bot updates the clone it already has. Leave `config.json`, `data/`, and the bot store as they are.
+An already-installed bot updates the clone it already has. Leave `config.json`, `data/`, and the bot store as they are. Do not pull on a schedule.
+
+Individual mode does not check `versions/` and does not download the global list. If the owner asks to update, follow the steps below. Community mode does not use these steps until the owner says yes on the Monday check. That check is in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md).
 
 1. From the clone, run `python3 version.py` and keep the line.
 2. `git pull --ff-only`. When `requirements.txt` changed, run `python3 -m pip install -r requirements.txt`.
 3. Run `python3 version.py` again. When the line changed, read `CHANGELOG.md` and tell the owner the new version in one line.
-4. Leave the good neighbours file and `state.json` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
+4. Leave the good neighbours file, `state.json`, `community.json`, and `global_neighbours.neighbours` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
 
 ## First run
 
@@ -43,8 +47,9 @@ Then do the rest with the defaults. Do not ask setup questions.
 1. `get_users_me` with `user.fields=id,name,username,description,profile_image_url`. That is the account. Write `handle` and `user_id` into `config.json` copied from `config.example.json`. If you know their timezone, set `timezone` to an IANA name such as `Europe/Stockholm`. Leave `fresh_hours` unset unless they ask for a fixed interval. Leave every other key as in the example.
 2. Clone or `git pull --ff-only` this repo, install Pillow, and fetch only the last `first_run_days` from config (default **2 days**, 48 hours). Use the tool calls below with that `START`. Do not fetch a full week on the first run. Never commit `config.json` or `data/`. A later update follows “Upgrading”.
 3. Run `python3 x_neighbours.py --now <T> --first-run --good-neighbours <path> --state <state path>`. Send the report as two messages, exactly as in “How to send a report”. Do not post the thank-you yourself. If stdout has `add_question`, send that one card after those two messages. Do not ask again in prose.
-4. Create both routines with no question: every day at 9:00 AM (last 24 hours, picture included), and Mondays at 9:00 AM (last 7 days, reusing daily files, picture included). Use their timezone, or UTC if you don't know it.
-5. Close with one line: daily and Monday reports are set; anything can be changed by asking (time, period, top N, likes only, replies only, per post, per day); say 'add @someone to my good neighbours' to keep up with them here.
+4. Offer community mode once, with `python3 community.py --file <community path> offer`. If `offer` is true, send one yes/no card with `prompt`. If they say yes, run `join` and add the Sunday routine from the community skill. If they say no, leave individual mode. Do not ask again later. The file is `community.json` in the bot store.
+5. Create both routines with no question: every day at 9:00 AM (last 24 hours, picture included), and Mondays at 9:00 AM (last 7 days, reusing daily files, picture included). Use their timezone, or UTC if you don't know it. Do not `git pull` inside those routines.
+6. Close with one line: daily and Monday reports are set; anything can be changed by asking (time, period, top N, likes only, replies only, per post, per day); say 'add @someone to my good neighbours' to keep up with them here.
 
 Do not send a settings list.
 
@@ -210,7 +215,7 @@ Each section shows at most five entries. A last line says how many are left (`+3
 
 ⭐ next to a name means they are on the good neighbours list. The legend “⭐ = good neighbour” appears only when that list is non-empty. 👤? means the owner does not follow that person. Do not add a followed/unfollowed split, a follow-back list, or impressions.
 
-**Message 2 — section 4, one message, picture included.** This is a single chat message. Put the house-framed PNG in that message's `images` field. The path is `messages[1].images[0]`, the same file as `picture`. The text of the same message is `thank_you.text`, then a blank line, then the link `thank_you.intent` with the label “Post your thank-you”, then a blank line, then `thank_you.note`: “Save the picture and attach it in X before posting.” No @handles in this message.
+**Message 2 — section 4, one message, picture included.** This is a single chat message. Put the house-framed PNG in that message's `images` field. The path is `messages[1].images[0]`, the same file as `picture`. The text of the same message is `thank_you.text`, then a blank line, then the link `thank_you.intent` with the label “Post your thank-you”, then a blank line, then `thank_you.note`: “Save the picture and attach it in X before posting.” In individual mode, no @handles in this message. In community mode, run `picture-tag` from the community skill. When it says `remind`, use its `intent` for the link and add its `text` after the note. That line is the only @handle, and you still do not post the picture. When the posting account is already `@SkyXFunNext`, skip the line.
 
 The picture belongs inside this message. Do not send the picture as its own message. Do not send the picture as a later attachment. Do not send the text first and the picture second. If the owner cannot see the picture in the same bubble as the thank-you sentence, the send was wrong. The link only opens a composer with the words. It does not attach the picture. Never say that tapping the link posts the image.
 
@@ -228,7 +233,7 @@ Both run at 9:00 AM in the owner's timezone. Count every X call from both toward
 
 ### Every day
 
-1. Follow “Upgrading” (`git pull --ff-only` is part of it). Leave `config.json` and `data/` uncommitted.
+1. Do not `git pull` on a schedule. Leave `config.json` and `data/` uncommitted. An owner who asks to update in individual mode follows “Upgrading”. Community mode checks on Monday and pulls only after they say yes.
 2. Do not refresh followers or following.
 3. Pick `T`. `START` is `T` minus 24 hours.
 4. Fetch posts and mentions from `START`. Save them as `posts_day_1`, `posts_day_2`, … and `mentions_day_1`, ….
@@ -249,6 +254,7 @@ If today's `posts_day_1.json` is missing, do the daily run first.
 4. If that span is missing, fetch it once: `get_users_posts` and `get_users_mentions` with `start_time` of `T` minus 7 days and `end_time` of `T` minus 24 hours. Save as `posts_week_1`, … and `mentions_week_1`, …. Then the same 3-or-more rule for likes, reposts, and quotes. Refresh `latest_<userid>.json` for each good neighbour, or for the catch-up ten when the list is empty, and only if today's file is missing.
 5. Run `python3 x_neighbours.py --now <T> --windows week --good-neighbours <path> --state <state path>`. Do not send the ⭐ Add card on this report.
 6. Send the report with “How to send a report”: message 1 is `report_week.md` with no image, message 2 is the thank-you text and link with `x_neighbours_week.png` in that message's `images` field. Do not post it. Do not send a report card unless they asked for `--report-card`. After those two messages, add one line and nothing else: “Anything you'd change about X Neighbours? Tell me and I'll turn it into a feedback link.” That line is `feedback_line` in the script output. Do not fetch anything for it.
+7. If community mode is on, run the Monday check in the community skill (ask before any upgrade, then save the global list). If it is off, do not fetch `versions/` or the global file.
 
 If the Monday calls would pass about 1,000 for the day, send the day picture you already have, fetch the older posts and mentions, and stop the liker lists when the cap is close. Tell the owner which older posts were left out.
 
@@ -298,6 +304,10 @@ Adding someone does not follow them. This run stays read-only on X.
 When the list is non-empty, Catch up with your good neighbours shows only those people, each one's latest original post the owner has not already liked, replied to, reposted, or quoted, and skips anyone with no such post. A quote of their own counts as that original post; a reply or a plain repost does not. The age is the post's `created_at` against the current UTC time. They are not inserted into the other sections just because they are on the list. When the list is empty, Catch up stays the top 10 from the period, with the same skip, and the report adds: “Add people to your good neighbours list to keep up with them here.” If nothing is left to show, the section is “You're all caught up with your good neighbours 🎉”.
 
 After a daily report, a first run, and a fresh on-demand report, the script lists up to five people from Flowers who are not on the list yet, in Flowers order. They are in `suggest_good_neighbours`. If nobody is left, `add_question` is absent and you skip the card. Send one multi-select card, short label **⭐ Add**. Each option label is `Display Name (@username)` from the `label` field. Do not rewrite it to the handle alone. Add a free-text option (“Or name anyone else”). A weekly report does not ask. The first-run closing line mentions the list once, besides that card.
+
+## Community and sharing
+
+Community mode, the Sunday reminder, the Monday version check, and the picture-tag line are in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md). Sharing a list is in [skills/x-neighbours-share/SKILL.md](../x-neighbours-share/SKILL.md). Both stay off until `community.json` says they joined. Recommendations are not follows. You never post the picture or the proof code.
 
 ## When they just say hello
 

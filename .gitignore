@@ -12,6 +12,9 @@ x_neighbours_*.png
 # Personal files copied into the working tree. The fictional example stays tracked.
 /good_neighbours.json
 /state.json
+/community.json
+/global_neighbours.neighbours
+/*.neighbours
 
 __pycache__/
 *.py[cod]

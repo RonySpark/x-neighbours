@@ -8,6 +8,10 @@ python3 version.py
 
 ## Unreleased
 
+- Community mode is opt-in and off by default. Individual bots do not check for updates or use the shared list. Community bots get a Sunday share reminder, a Monday check that asks before upgrading, a local copy of the global recommendations, and a reminder to tag @SkyXFunNext when posting the neighbours picture. The bot still does not post. ([#44](https://github.com/Skybatan/x-neighbours/issues/44), [#46](https://github.com/Skybatan/x-neighbours/issues/46))
+- A community owner can share an eligible neighbours list as `submissions/<user id>/<timestamp>.neighbours`. The score matches the picture, with a conversation floor, a 100-person cap, and one submission every 7 days. ([#43](https://github.com/Skybatan/x-neighbours/issues/43))
+- The global list is rebuilt from each owner's latest submission. An account needs two recommendations, unless it is in the one founding file named by `global/build.json`. That waiver is empty until the maintainer points it at a file. The credit on that file is a neutral founding identity. ([#45](https://github.com/Skybatan/x-neighbours/issues/45))
+- Neighbour Dog's runbook reviews share pull requests. GitHub Actions check the file shape and rebuild the global list. Neighbour Dog's token and GitHub account are for the maintainer to configure. ([#47](https://github.com/Skybatan/x-neighbours/issues/47))
 - The house-framed thank-you picture shows each neighbour's display name, with @username on the line below. A missing name stays @username alone. ([#38](https://github.com/Skybatan/x-neighbours/issues/38))
 - What's new shows each good neighbour's newest original post. A quote of their own counts. A reply or a plain repost does not. The age is that post's `created_at` against the current UTC time, not the report window. ([#36](https://github.com/Skybatan/x-neighbours/issues/36))
 

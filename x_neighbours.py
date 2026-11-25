@@ -1334,17 +1334,24 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
 
     likes_c, reposts_c = Counter(), Counter()
     reply_c, quote_c = Counter(), Counter()
+    seen_at = defaultdict(list)
     for pid, post in data.posts.items():
         if not data._in_window(post.get("created_at"), since, until):
             continue
+        when = ts(post["created_at"])
         for uid in data.likes.get(pid, []):
             if not hidden_user(data, uid):
                 likes_c[uid] += 1
+                seen_at[uid].append(when)
         for uid in data.reposts.get(pid, []):
             if not hidden_user(data, uid):
                 reposts_c[uid] += 1
+                seen_at[uid].append(when)
     for item in items:
-        (quote_c if item["kind"] == "quote" else reply_c)[item["author_id"]] += 1
+        author = item["author_id"]
+        (quote_c if item["kind"] == "quote" else reply_c)[author] += 1
+        if author:
+            seen_at[author].append(item["created_at"])
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
@@ -1423,6 +1430,28 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         row["username"],
     ))
 
+    share_counts = []
+    for uid in sorted(people, key=lambda item: str(item)):
+        if likes_c[uid] + reposts_c[uid] + reply_c[uid] + quote_c[uid] <= 0:
+            continue
+        info = describe(uid)
+        times = seen_at.get(uid) or []
+        share_counts.append({
+            "user_id": str(uid),
+            "handle": info["username"],
+            "name": info["name"],
+            "replies": reply_c[uid],
+            "quotes": quote_c[uid],
+            "reposts": reposts_c[uid],
+            "likes": likes_c[uid],
+            "first_seen": (
+                min(times).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if times else ""
+            ),
+            "last_seen": (
+                max(times).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if times else ""
+            ),
+        })
+
     def catch_person(uid, fallback=None):
         chosen = None
         for post in data.originals.get(uid) or []:
@@ -1468,6 +1497,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         "interactions": interactions,
         "catch_up": catch_up,
         "ranked": ranked,
+        "share_counts": share_counts,
         "has_good_neighbours": bool(good),
         "catch_hint": not good,
         "all_caught_up": not catch_up and bool(good),

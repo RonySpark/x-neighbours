@@ -465,10 +465,44 @@ class GlobalBuildTest(unittest.TestCase):
             self.assertEqual(fh.read(), before)
 
     def test_committed_global_file_matches_an_empty_rebuild(self):
-        document, _summary = global_build.build(ROOT, "", "2026-11-25T00:00:00Z")
-        with open(os.path.join(ROOT, rules.GLOBAL_REL), encoding="utf-8") as fh:
-            committed = json.load(fh)
-        self.assertEqual(committed, document)
+        """An empty submissions tree rebuilds to an empty global list.
+
+        The rebuild runs in a temp repo with the build config and no share
+        files, so a real file under submissions/ does not change the result.
+        The committed global file is checked for shape only. A later rebuild
+        may list owners, and a share pull request does not have to update it.
+        """
+        repo = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(repo, "global"))
+            shutil.copy(
+                os.path.join(ROOT, "global", "build.json"),
+                os.path.join(repo, "global", "build.json"))
+            document, summary = global_build.build(repo, "", "2026-11-25T00:00:00Z")
+            self.assertTrue(summary["ok"])
+            self.assertEqual(summary["neighbours"], 0)
+            self.assertEqual(summary["owners"], 0)
+            self.assertEqual(document["neighbours"], {})
+            self.assertEqual(document["owners"], {})
+            self.assertEqual(document["opted_out"], [])
+            self.assertEqual(document["banned_owners"], [])
+            self.assertEqual(document["generated_at"], "2026-11-25T00:00:00Z")
+            self.assertEqual(document["source_commit"], "")
+            self.assertEqual(document["format"], rules.FORMAT_GLOBAL)
+            with open(os.path.join(ROOT, rules.GLOBAL_REL), encoding="utf-8") as fh:
+                committed = json.load(fh)
+            # The seed file and a later rebuild share this shape. Owners and
+            # neighbours depend on submissions, so this test does not require
+            # the committed file to stay empty.
+            self.assertEqual(committed["format"], document["format"])
+            self.assertEqual(committed["rules_version"], document["rules_version"])
+            self.assertEqual(committed["min_recommendations"], document["min_recommendations"])
+            self.assertEqual(
+                committed["submission_interval_days"], document["submission_interval_days"])
+            self.assertIsInstance(committed["neighbours"], dict)
+            self.assertIsInstance(committed["owners"], dict)
+        finally:
+            shutil.rmtree(repo)
 
 
 class CommunityModeTest(unittest.TestCase):
@@ -710,6 +744,98 @@ class NeighbourDogTest(unittest.TestCase):
         self.assertFalse(outcome["merged"])
         self.assertFalse(outcome["posted"])
         self.assertEqual(called, [])
+
+
+class OneSubmissionCITest(unittest.TestCase):
+    """A real share file must not turn the suite, the validator, or the rebuild red."""
+
+    def test_one_valid_submission_keeps_checks_green(self):
+        parent = tempfile.mkdtemp()
+        try:
+            dest = os.path.join(parent, "repo")
+            shutil.copytree(
+                ROOT, dest,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", "venv", "*.pyc"))
+            self._git(dest, "init", "-b", "v3")
+            self._git(dest, "config", "user.email", "test@example.com")
+            self._git(dest, "config", "user.name", "Test Bot")
+            self._git(dest, "add", "-A")
+            self._git(dest, "commit", "-m", "base")
+            base = self._git(dest, "rev-parse", "HEAD").stdout.strip()
+
+            relpath, _doc = write_submission(
+                dest, "100", "example_owner", NOW, [person(201, "ex_neighbour")])
+            report = share.validate_file(
+                os.path.join(dest, relpath), dest, now="2026-11-25T18:00:00Z")
+            self.assertTrue(report.ok, report.errors)
+
+            nested = subprocess.run(
+                [sys.executable, "-m", "unittest",
+                 "tests.test_version.VersionTest.test_version_string_appears_only_in_VERSION",
+                 "tests.test_share_and_community.GlobalBuildTest.test_committed_global_file_matches_an_empty_rebuild"],
+                cwd=dest, capture_output=True, text=True)
+            self.assertEqual(nested.returncode, 0, nested.stderr)
+
+            self._git(dest, "add", relpath)
+            self._git(dest, "commit", "-m", "Share neighbours from example_owner")
+            checked = subprocess.run(
+                [sys.executable, os.path.join(dest, "share_submission.py"), "validate-pr",
+                 "--repo", dest, "--base", base, "--labels", ""],
+                cwd=dest, capture_output=True, text=True)
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            payload = json.loads(checked.stdout)
+            self.assertTrue(payload["ok"], payload)
+            self.assertTrue(payload["share"])
+            self.assertEqual(payload["added"], [relpath])
+            self.assertEqual(payload["errors"], [])
+
+            latest = os.path.join(dest, "versions", "latest.json")
+            with open(latest, encoding="utf-8") as fh:
+                before = fh.read()
+            out = os.path.join(dest, "global", "neighbours.global.neighbours")
+            rebuilt = subprocess.run(
+                [sys.executable, os.path.join(dest, "global_build.py"),
+                 "--repo", dest, "--out", out,
+                 "--now", "2026-11-26T00:00:00Z", "--source-commit", "abc123"],
+                cwd=dest, capture_output=True, text=True)
+            self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
+            summary = json.loads(rebuilt.stdout)
+            self.assertTrue(summary["ok"])
+            self.assertEqual(summary["neighbours"], 0)
+            self.assertEqual(summary["owners"], 1)
+            with open(latest, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), before)
+            with open(out, encoding="utf-8") as fh:
+                document = json.load(fh)
+            self.assertEqual(document["neighbours"], {})
+            self.assertIn("100", document["owners"])
+            self.assertEqual(
+                document["owners"]["100"]["latest_submission"], relpath)
+
+            validate_workflow = self._workflow("validate.yml")
+            tests_workflow = self._workflow("tests.yml")
+            rebuild_workflow = self._workflow("rebuild-global.yml")
+            self.assertIn("pull_request:", validate_workflow)
+            self.assertIn("share_submission.py validate-pr", validate_workflow)
+            self.assertIn("pull_request:", tests_workflow)
+            self.assertIn("unittest discover -s tests", tests_workflow)
+            self.assertIn('branches:\n      - main', rebuild_workflow)
+            self.assertIn('"submissions/**"', rebuild_workflow)
+            self.assertIn("global_build.py", rebuild_workflow)
+            self.assertNotIn("pull_request:", rebuild_workflow)
+            self.assertNotIn("versions/", rebuild_workflow)
+        finally:
+            shutil.rmtree(parent)
+
+    def _git(self, dest, *args):
+        result = subprocess.run(
+            ["git", *args], cwd=dest, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def _workflow(self, name):
+        with open(os.path.join(ROOT, ".github", "workflows", name), encoding="utf-8") as fh:
+            return fh.read()
 
 
 def urllib_unquote(value):

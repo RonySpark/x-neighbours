@@ -26,7 +26,7 @@ One change per branch and per pull request. When you find a second problem, open
   - [`README.md`](../../README.md)
   - [`skills/x-neighbours/SKILL.md`](../x-neighbours/SKILL.md), the bot instructions for later reports. The first-report steps live in [`FIRST_RUN.md`](../x-neighbours/FIRST_RUN.md). `BOT.md` only points at those files. Edit the skill. Do not paste runbook text into `BOT.md`.
   - [`CHANGELOG.md`](../../CHANGELOG.md). Add a dated section at the top for what changed, and link the issue or the pull request.
-- When you release, bump the version. The number is the single line in [`VERSION`](../../VERSION). Replace that line. A fix bumps the last number. A feature bumps the middle number and sets the last number to 0. `version.py` reads `VERSION`. Check with `python3 version.py`. The README, the runbook, this skill, and the changelog do not copy the number.
+- When you release, bump the version. The number is the single line in [`VERSION`](../../VERSION). Replace that line. A fix bumps the last number. A feature bumps the middle number and sets the last number to 0. `version.py` reads `VERSION`. Check with `python3 version.py`. The README, the runbook, this skill, and the changelog do not copy the number. Put 3 to 6 short owner-facing lines in `release_notes` on the version file (or pass them to `versions_release.py --notes`, separated by `|`). The Monday check shows up to three of those lines when it asks, and the full list after a yes.
 
 ## Pull request
 

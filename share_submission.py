@@ -15,6 +15,11 @@ submissions/<x_user_id>/<UTC timestamp>.neighbours. Older files stay.
   python3 share_submission.py validate-pr --repo ROOT --base REF [--labels a,b]
   python3 share_submission.py open-pr --file PATH
 
+validate-file checks a draft on its contents. The path rule
+(submissions/<user id>/<timestamp>.neighbours) applies only when the
+file is already under submissions/, which is where a share pull request
+places it.
+
 open-pr reads X_NEIGHBOURS_GITHUB_TOKEN from the environment. It never
 prints the token and it never takes the token as an argument. With no
 token it does not open a pull request.
@@ -270,11 +275,27 @@ def _require_object(report, value, label):
     return True
 
 
+def path_rules_apply(relpath):
+    """True when the file is already under submissions/.
+
+    A draft in the bot store is checked on content. The folder name and the
+    file stamp are checked only once the file sits at
+    submissions/<user id>/<timestamp>.neighbours, which is where open-pr
+    and a share pull request place it.
+    """
+    rel = str(relpath or "").replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    return rel.startswith("submissions/")
+
+
 def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
-                      banned=None, waiver=None, now=None):
+                      banned=None, waiver=None, now=None, check_path=True):
     """Append errors for one submission document. relpath is repo-relative.
 
     now is the clock for future timestamps. It defaults to the current UTC time.
+    check_path is false for a draft that is not under submissions/. Content
+    rules still run. The path rule runs when the file is placed for submit.
     """
     opted_out = set(opted_out or [])
     banned = set(banned or [])
@@ -298,21 +319,27 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
     if doc.get("version") != rules.SUBMISSION_VERSION:
         report.add("schema", "unsupported submission version")
 
-    match = rules.SUBMISSION_RE.fullmatch(relpath or "")
+    match = rules.SUBMISSION_RE.fullmatch(relpath or "") if check_path else None
     # The waiver names one normal submissions file. It does not change that
     # file's owner. global_build.py is what writes the neutral credit.
-    waiver_rel = rules.clean_relpath(waiver)
-    if waiver_rel and rules.clean_relpath(relpath) == waiver_rel and not match:
-        report.add(
-            "path",
-            "the founding waiver must be a normal submissions/<user id>/<timestamp>.neighbours file",
-        )
-    if not match:
-        report.add("path", "path must be submissions/<user id>/<timestamp>.neighbours")
+    # A draft outside submissions/ skips this. Submit places the file, and
+    # the pull request check is what requires the path.
+    if check_path:
+        waiver_rel = rules.clean_relpath(waiver)
+        if waiver_rel and rules.clean_relpath(relpath) == waiver_rel and not match:
+            report.add(
+                "path",
+                "the founding waiver must be a normal submissions/<user id>/<timestamp>.neighbours file",
+            )
+        if not match:
+            report.add("path", "path must be submissions/<user id>/<timestamp>.neighbours")
+            owner_from_path = ""
+            stamp = ""
+        else:
+            owner_from_path, stamp = match.group(1), match.group(2)
+    else:
         owner_from_path = ""
         stamp = ""
-    else:
-        owner_from_path, stamp = match.group(1), match.group(2)
 
     try:
         submitted = rules.iso(doc.get("submitted_at"))
@@ -536,6 +563,7 @@ def validate_file(path, repo, relpath=None, now=None):
     report = Report()
     if relpath is None:
         relpath = os.path.relpath(path, repo).replace(os.sep, "/")
+    check_path = path_rules_apply(relpath)
     try:
         size = os.path.getsize(path)
     except OSError as exc:
@@ -557,7 +585,7 @@ def validate_file(path, repo, relpath=None, now=None):
     validate_document(
         doc, relpath, report, previous_at=previous,
         opted_out=opted_out_ids(repo), banned=banned_owner_ids(repo),
-        waiver=waiver_path(build), now=now,
+        waiver=waiver_path(build), now=now, check_path=check_path,
     )
     return report
 
@@ -871,7 +899,10 @@ def main():
     from_data.add_argument("--out", required=True)
     from_data.add_argument("--repo", default=".")
 
-    check = sub.add_parser("validate-file", help="check one submission file")
+    check = sub.add_parser(
+        "validate-file",
+        help="check a draft on content, or a file under submissions/ on content and path",
+    )
     check.add_argument("path")
     check.add_argument("--repo", default=".")
 

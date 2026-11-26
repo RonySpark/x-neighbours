@@ -19,7 +19,7 @@ Read [`skills/x-neighbours/SKILL.md`](../x-neighbours/SKILL.md) for the report i
 
 ## Join and leave
 
-Do not offer community mode during the trial report. That report follows [FIRST_RUN.md](../x-neighbours/FIRST_RUN.md) and stops at the five-post demo plus a short intro. After the owner has picked a daily, weekly, or on-request routine, offer community once, with or after their first regular report. If they ask to join before that, wait until that report. Then run:
+Do not offer community mode during the first report. That report follows [FIRST_RUN.md](../x-neighbours/FIRST_RUN.md) and stops at the five-post demo plus a short intro. After the owner has picked a daily, weekly, or on-request routine, offer community once, with or after their first regular report. If they ask to join before that, wait until that report. Then run:
 
 ```bash
 python3 community.py --file <community path> offer
@@ -52,17 +52,17 @@ python3 community.py --file <community path> plan --repo .
 
 ## Picture tag
 
-When you send section 4 and community mode is on:
+When community mode is on, run this before WriteCanvas, as the main runbook says:
 
 ```bash
 python3 community.py --file <community path> picture-tag --handle <config handle> --text "<thank_you.text>"
 ```
 
-If `remind` is false, send the thank-you exactly as the main runbook says. No @handle in that message.
+If `remind` is false, leave the Page as the report script wrote it. No @handle in the chat message.
 
-If `remind` is true, keep `thank_you.text` as the first line. Use `intent` instead of `thank_you.intent` for the “Post your thank-you” link, so the composer includes `@SkyXFunNext`. After `thank_you.note`, add `text`. That reminder is the only @handle in the message. The owner still attaches the picture and posts it. You do not post or repost.
+If `remind` is true, rewrite the Page with `report_page.py` so the “Post your thank-you” link is `intent` (the composer includes `@SkyXFunNext`) and `text` follows the note. That reminder is the only @handle, and it stays on the Page. The owner still attaches the picture and posts it. You do not post or repost.
 
-The reminder is skipped when the posting account is already `@SkyXFunNext`.
+The reminder is skipped when the posting account is already `@SkyXFunNext`. If WriteCanvas fails, the plain-text fallback in the main runbook uses the same `intent` and adds `text` after the note.
 
 ## Sunday reminder
 
@@ -76,7 +76,7 @@ If `remind` is false, send nothing. If it is true, send `text` and nothing else.
 
 ## Monday global list
 
-The version check is the Monday update check in the main runbook. It runs with community mode off. Do not run `check-update` or `decide-upgrade` from this file. Pip install still happens only when `requirements.txt` changed, and that step is in the main runbook.
+The version check is the Monday update check in the main runbook. It runs with community mode off. Do not run `check-update` or `decide-upgrade` from this file. Pip install still happens only when `requirements.txt` changed, and that step is in the main runbook. The report itself is still a Page.
 
 After that check, and only when community mode is on, download `global_url` from `plan` and save it:
 

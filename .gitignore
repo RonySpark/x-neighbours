@@ -7,11 +7,23 @@ data/
 report_*.md
 report_*.json
 report_*.png
+report_*.canvas.tsx
+report_*_page.json
+/good_neighbours.canvas.tsx
+/good_neighbours_page.json
+/community.canvas.tsx
+/community_page.json
 x_neighbours_*.png
 
 # Personal files copied into the working tree. The fictional example stays tracked.
 /good_neighbours.json
 /state.json
+/community.json
+/global_neighbours.neighbours
+/*.neighbours
+
+# Local state a test bot writes. Never commit it.
+test-state/
 
 __pycache__/
 *.py[cod]

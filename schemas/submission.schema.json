@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Skybatan/x-neighbours/schemas/submission.schema.json",
+  "title": "X Neighbours submission",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "submitted_at",
+    "owner",
+    "verification",
+    "consent",
+    "period",
+    "neighbours",
+    "generator"
+  ],
+  "properties": {
+    "format": {"const": "x-neighbours-submission"},
+    "version": {"const": 1},
+    "submitted_at": {"type": "string"},
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id", "handle"],
+      "properties": {
+        "user_id": {"type": "string"},
+        "handle": {"type": "string"},
+        "name": {"type": "string"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "proof_post_id"],
+      "properties": {
+        "code": {"type": "string"},
+        "proof_post_id": {"type": "string"}
+      }
+    },
+    "consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["share_publicly", "agreed_rules_version"],
+      "properties": {
+        "share_publicly": {"const": true},
+        "agreed_rules_version": {"type": "string"}
+      }
+    },
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {"type": "string"},
+        "to": {"type": "string"}
+      }
+    },
+    "neighbours": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/neighbour"}
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bot", "template_version"],
+      "properties": {
+        "bot": {"const": "x-neighbours"},
+        "template_version": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "neighbour": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id", "handle", "interactions", "first_seen", "last_seen"],
+      "properties": {
+        "user_id": {"type": "string"},
+        "handle": {"type": "string"},
+        "interactions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["replies", "quotes", "reposts", "likes"],
+          "properties": {
+            "replies": {"type": "integer", "minimum": 0},
+            "quotes": {"type": "integer", "minimum": 0},
+            "reposts": {"type": "integer", "minimum": 0},
+            "likes": {"type": "integer", "minimum": 0}
+          }
+        },
+        "first_seen": {"type": "string"},
+        "last_seen": {"type": "string"},
+        "note": {"type": "string", "maxLength": 140},
+        "tags": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {"type": "string"}
+        }
+      }
+    }
+  }
+}

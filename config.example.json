@@ -1,12 +1,14 @@
 {
   "handle": "your_handle",
   "user_id": "your_user_id",
+  "name": "",
   "like_weight": 1,
   "reply_weight": 3,
   "exclude": ["grok"],
   "rings": 3,
   "show_names": true,
   "first_run_days": 2,
+  "trial_post_count": 5,
   "items_per_user": 3,
   "theme": "midnight",
   "windows": ["week"],
@@ -14,5 +16,6 @@
   "report": "both",
   "per_post": false,
   "per_day": false,
-  "timezone": ""
+  "timezone": "",
+  "share_branch": ""
 }

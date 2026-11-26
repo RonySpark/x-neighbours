@@ -198,7 +198,12 @@ class Data:
                     bucket.append(uid)
                     have.add(uid)
         for pid, ids in self.likes.items():
-            want = like_count(self.posts.get(pid, {}))
+            post = self.posts.get(pid)
+            # Reply liker files are not required. A file for an owner reply
+            # is ignored, and a missing one is not a short page.
+            if post is not None and not is_owner_original_post(post):
+                continue
+            want = like_count(post or {})
             if want > len(ids):
                 self.likes_truncated.append((pid, len(ids), want))
         self._load_user_lists("reposts_*.json", self.reposts, "reposts_<post id>")
@@ -207,6 +212,9 @@ class Data:
         self._load_engagement()
         self.followers = self._idset("followers_*.json")
         self.following = self._idset("following_*.json")
+        # No following file means the first report (or a partial fetch) did not load
+        # the list. An empty file still counts as loaded.
+        self.following_known = bool(glob.glob(os.path.join(self.data_dir, "following_*.json")))
 
     def _prepare_user(self, user):
         user = dict(user)
@@ -431,6 +439,8 @@ class Data:
         for pid, post in self.posts.items():
             if not self._in_window(post.get("created_at"), since, until):
                 continue
+            if not is_owner_original_post(post):
+                continue
             for uid in self.likes.get(pid, []):
                 if uid != self.me:
                     likes[uid] += 1
@@ -439,8 +449,7 @@ class Data:
                 continue
             if not self._in_window(mention.get("created_at"), since, until):
                 continue
-            parent = next(iter(referenced_ids(mention, "replied_to")), None)
-            if parent and parent in self.owner_original_ids:
+            if is_first_level_reply(mention, self.owner_original_ids):
                 replies[mention["author_id"]] += 1
         excluded = getattr(self, "exclude", set())
         for counts in (likes, replies):
@@ -487,17 +496,421 @@ def is_original_post(post):
 
 
 def is_owner_original_post(post):
-    """Owner post that is not itself a reply.
+    """Owner post or quote that starts a conversation. Not an owner reply.
 
-    conversation_id, when present, is the thread root. A reply keeps that root
+    conversation_id is the thread root. On an original post it matches the
+    post id (or it is missing). On a reply it stays the root, so it differs,
     even when the saved object has no referenced_tweets of its own.
+
+    A quote starts a conversation too: referenced_tweets or referenced_posts
+    has type quoted, and the quote is not itself a reply. Some payloads set
+    that quote's conversation_id to the quoted post. It is still a starter,
+    and likers are fetched for it. A quote that is also a reply is not.
     """
     if not is_original_post(post):
         return False
+    for ref in referenced(post):
+        kind = (ref.get("type") or "").replace("-", "_").lower()
+        if kind in ("quoted", "quote"):
+            return True
     root = post.get("conversation_id")
     if root and str(root) != str(post.get("id")):
         return False
     return True
+
+
+def direct_reply_parent(post):
+    """Id of the direct replied_to parent, or None.
+
+    The id comes from referenced_tweets, or from referenced_posts when that
+    is the only list. conversation_id is the thread root, shared by every
+    reply in the thread, so it is not this parent. in_reply_to_user_id is
+    the parent's author. A nested reply under the owner's own reply still
+    has that field set to the owner.
+    """
+    found = referenced_ids(post, "replied_to")
+    return found[0] if found else None
+
+
+def is_first_level_reply(post, starter_ids):
+    """True when this post replies directly to an owner post or quote.
+
+    starter_ids are the owner's conversation starters (original posts and
+    quotes), not the owner's replies. Owner posts P, A replies to P (A1),
+    the owner replies to A1, and A replies again (A2): only A1 is first-level.
+    A2's replied_to parent is the owner's reply, so A2 does not count.
+    """
+    parent = direct_reply_parent(post)
+    return bool(parent) and parent in starter_ids
+
+
+def should_fetch_likers(post, now):
+    """Whether to call get_posts_liking_users for this owner post.
+
+    Replies are never fetched, even when like_count is greater than 0.
+    Original posts and quotes keep the existing budget:
+    last 24 hours and like_count greater than 0, or days 2–7 and
+    like_count at least 3. Older posts are skipped. A missing created_at
+    cannot be placed in a window, so it is skipped too.
+    """
+    if not isinstance(post, dict) or not is_owner_original_post(post):
+        return False
+    likes = like_count(post)
+    created = post.get("created_at")
+    if not created:
+        return False
+    age = ts(now) - ts(created)
+    if age.total_seconds() < 0:
+        return False
+    if age <= timedelta(hours=24):
+        return likes > 0
+    if age <= timedelta(days=7):
+        return likes >= 3
+    return False
+
+
+TRIAL_POST_COUNT = 5
+TRIAL_READ_BUDGET = 15
+# Recent search returns 25 posts a page even when max_results is 100.
+SEARCH_PAGE_SIZE = 25
+# Reply pages wait on each other. A real tour spent about a minute a page.
+SEARCH_PAGE_SECONDS = 60
+TOUR_TITLE = "Welcome tour"
+TOUR_FLOWERS = "Flowers are the people who replied, liked, or reposted you."
+TOUR_WHATS_NEW = "What's new is a post you have not caught up with yet."
+TOUR_REPLIES = "Replies waiting means they wrote to you and you have not answered yet."
+TOUR_THANKS = "The picture is a thank-you you can save and attach on X."
+TOUR_NEXT_HEADING = "What's next"
+TOUR_NEXT_CHOICE = (
+    "You can have the report daily, weekly, or only when you ask. "
+    "I'll ask right after this page."
+)
+TOUR_NEXT_LATER = (
+    "Good neighbours, a picture on its own, and the community list come after this tour."
+)
+PICTURE_NUDGE = "Want a neighbours picture to post? Ask anytime and I'll make one."
+
+
+def one_line(value):
+    """One display line. Newlines and control characters become spaces."""
+    chars = []
+    for char in str(value or ""):
+        code = ord(char)
+        if char in "\r\n\t" or code < 0x20 or code == 0x7F or code in (0x2028, 0x2029):
+            chars.append(" ")
+        else:
+            chars.append(char)
+    return re.sub(r"\s+", " ", "".join(chars)).strip()
+
+
+def greeting_name(name, handle):
+    """Display name for the welcome greeting. A blank name falls back to @handle."""
+    cleaned = one_line(name)
+    if cleaned:
+        return cleaned
+    handle = one_line(handle).lstrip("@").replace(" ", "")
+    if handle:
+        return "@" + handle
+    return ""
+
+
+def hello_line(name, handle):
+    who = greeting_name(name, handle)
+    if who:
+        return f"Hi {who}! 👋"
+    return "Hi! 👋"
+
+
+def post_scope(count):
+    count = int(count or 0)
+    if count == 1:
+        return "your latest post"
+    if count > 1:
+        return f"your {count} latest posts"
+    return "your latest posts"
+
+
+TOUR_HELP = (
+    "X Neighbours helps you keep up with and grow the connections around your posts "
+    "(the people who reply, like, quote and repost)."
+)
+TOUR_HELP_CHAT = "X Neighbours helps you keep up with the people around your posts."
+
+
+def tour_delivery_line(count):
+    """Short chat line that goes with the Page link. It does not greet again."""
+    return f"Here's a quick welcome tour of {post_scope(count)}."
+
+
+def trial_intro(count, name=None, handle=None):
+    """Opening lines of the welcome tour. The greeting is the first line.
+
+    Three short lines: hello, what X Neighbours helps with, then the tour line.
+    No feature list, no picker, and no community ask.
+    """
+    return "\n".join([
+        hello_line(name, handle),
+        TOUR_HELP,
+        tour_delivery_line(count),
+    ])
+
+
+def tour_next_markdown():
+    return (
+        f"### {TOUR_NEXT_HEADING}\n\n"
+        f"{TOUR_NEXT_CHOICE}\n\n"
+        f"{TOUR_NEXT_LATER}\n"
+    )
+PARALLEL_BATCH = 12
+PER_READ_SECONDS = 10
+READS_PER_MINUTE = 30
+
+
+def estimate_minutes(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH,
+                     sequential_seconds=0):
+    """Whole minutes for this many X reads.
+
+    Time is reads × per-read seconds / parallelism, and never faster than
+    the 30-read minute cap. Parallelism stays at most 12. Any real run is
+    at least one minute. Zero reads is zero minutes.
+
+    `sequential_seconds` is time that cannot overlap, such as reply-search
+    pages that each wait on the previous page. It is not divided by the batch.
+    """
+    reads = int(read_count or 0)
+    sequential = max(0.0, float(sequential_seconds or 0))
+    if reads <= 0 and sequential <= 0:
+        return 0
+    if reads <= 0:
+        return max(1, int(math.ceil(sequential / 60 - 1e-9)))
+    width = max(1, min(int(parallelism), PARALLEL_BATCH, reads))
+    seconds = reads * float(per_read_seconds) / width
+    rate_seconds = reads / READS_PER_MINUTE * 60
+    seconds = max(seconds, rate_seconds, sequential)
+    return max(1, int(math.ceil(seconds / 60 - 1e-9)))
+
+
+def estimate_message(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH,
+                     sequential_seconds=0):
+    """What to tell the owner before the reads of a later report."""
+    minutes = estimate_minutes(
+        read_count, per_read_seconds, parallelism, sequential_seconds)
+    unit = "minute" if minutes == 1 else "minutes"
+    return (
+        f"This report is about {minutes} {unit}. "
+        "You don't need to wait in the chat. "
+        "I'll notify you when it's ready."
+    )
+
+
+def tour_estimate_message(read_count, name=None, handle=None, post_count=TRIAL_POST_COUNT,
+                          per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH,
+                          sequential_seconds=0):
+    """First chat message of the welcome tour. The greeting is already in it."""
+    minutes = estimate_minutes(
+        read_count, per_read_seconds, parallelism, sequential_seconds)
+    unit = "minute" if minutes == 1 else "minutes"
+    scope = post_scope(post_count)
+    return (
+        f"{hello_line(name, handle)} {TOUR_HELP_CHAT} "
+        f"I'm putting together a quick welcome tour of {scope}, "
+        f"about {minutes} {unit}; I'll let you know when it's ready."
+    )
+
+
+def reply_metric(post):
+    return int((post.get("public_metrics") or {}).get("reply_count") or 0)
+
+
+def reply_pages_for(total):
+    """How many recent-search pages `total` replies need, at 25 a page."""
+    total = max(0, int(total or 0))
+    if total <= 0:
+        return 0
+    return int(math.ceil(total / SEARCH_PAGE_SIZE))
+
+
+def select_trial_posts(posts, limit=TRIAL_POST_COUNT):
+    """Newest original posts and quotes, at most `limit`. Replies are left out.
+
+    There is no time window. A quote counts even when conversation_id is the
+    quoted post. A reply does not, including a quote that is also a reply.
+    """
+    limit = max(0, int(limit))
+    by_id = {}
+    for post in posts or []:
+        if not isinstance(post, dict) or post.get("id") is None or not post.get("created_at"):
+            continue
+        row = set_referenced(dict(post))
+        row["id"] = str(row["id"])
+        if not is_owner_original_post(row):
+            continue
+        current = by_id.get(row["id"])
+        if current is None or ts(row["created_at"]) > ts(current["created_at"]):
+            by_id[row["id"]] = row
+    ordered = sorted(by_id.values(), key=lambda post: ts(post["created_at"]), reverse=True)
+    return ordered[:limit]
+
+
+def load_saved_posts(data_dir):
+    rows = []
+    for _path, doc in load(os.path.join(data_dir, "posts_*.json")):
+        for post in doc.get("data") or []:
+            if isinstance(post, dict):
+                rows.append(post)
+    return rows
+
+
+def trial_plan(posts, limit=TRIAL_POST_COUNT, budget=TRIAL_READ_BUDGET, name=None, handle=None):
+    """Reads for the welcome tour, capped by `budget`.
+
+    The posts page is one read. Reply search is one page per 25 replies,
+    from the chosen posts' reply_count totals, because recent search returns
+    25 even when max_results is 100. Those pages are sequential. Likers,
+    reposters, and quote posts are one read each, and only when that count
+    is greater than 0. Likers are never planned for replies, because replies
+    are not in the chosen set. When the list is over the budget, reply pages
+    stay, then likers, then reposters, then quote posts, newest posts first.
+    """
+    limit = max(0, int(limit))
+    budget = max(0, int(budget))
+    chosen = select_trial_posts(posts, limit)
+    reads = []
+    skipped = []
+    used = 0
+
+    def add(call):
+        nonlocal used
+        count = int(call.get("count") or 1)
+        if used + count > budget:
+            skipped.append(call)
+            return False
+        used += count
+        reads.append(call)
+        return True
+
+    add({
+        "tool": "get_users_posts",
+        "count": 1,
+        "purpose": "latest original posts and quotes, one page",
+        "max_results": 100,
+        "exclude": ["replies", "retweets"],
+    })
+    ids = [str(post["id"]) for post in chosen]
+    reply_total = sum(reply_metric(post) for post in chosen)
+    pages_needed = reply_pages_for(reply_total) if ids else 0
+    search_pages = 0
+    if ids and pages_needed:
+        room = max(0, budget - used)
+        search_pages = min(pages_needed, room)
+        paging = (
+            "Recent search returns 25 posts a page even when max_results is 100. "
+            "Save each page as mentions_1, mentions_2, and so on. "
+            "Keep paging while next_token is set, the first-level replies saved "
+            f"so far are fewer than the posts' reply_count total ({reply_total}), "
+            "and the read budget still has room. Stop when that first-level count "
+            "matches those reply metrics or the budget ends. Do not stop after one extra page."
+        )
+        call = {
+            "tool": "search_posts_all",
+            "count": search_pages,
+            "purpose": "replies to the posts in the welcome tour",
+            "query": " OR ".join(f"conversation_id:{pid}" for pid in ids),
+            "post_ids": ids,
+            "reply_count": reply_total,
+            "page_size": SEARCH_PAGE_SIZE,
+            "pages_needed": pages_needed,
+            "max_results": 100,
+            "paging": paging,
+            "fallback": (
+                "If search is missing, page get_users_mentions the same way, "
+                "25 a page, until the first-level replies match reply_count "
+                "or the budget ends. Do not page the whole account past that."
+            ),
+        }
+        if search_pages:
+            used += search_pages
+            reads.append(call)
+        if search_pages < pages_needed:
+            skipped.append({
+                "tool": "search_posts_all",
+                "count": pages_needed - search_pages,
+                "purpose": "reply pages past the read budget",
+                "reply_count": reply_total,
+                "page_size": SEARCH_PAGE_SIZE,
+            })
+    optional = []
+    for index, post in enumerate(chosen):
+        pid = str(post["id"])
+        metrics = post.get("public_metrics") or {}
+        if like_count(post) > 0:
+            optional.append((0, index, {
+                "tool": "get_posts_liking_users",
+                "id": pid,
+                "count": 1,
+                "purpose": "likers",
+                "max_results": 100,
+            }))
+        if int(metrics.get("repost_count") or 0) > 0:
+            optional.append((1, index, {
+                "tool": "get_posts_reposted_by",
+                "id": pid,
+                "count": 1,
+                "purpose": "reposters",
+                "max_results": 100,
+            }))
+        if int(metrics.get("quote_count") or 0) > 0:
+            optional.append((2, index, {
+                "tool": "get_posts_quoted_posts",
+                "id": pid,
+                "count": 1,
+                "purpose": "quote posts",
+                "max_results": 100,
+            }))
+    optional.sort()
+    for _priority, _index, call in optional:
+        add(call)
+    summary = []
+    for post in chosen:
+        metrics = post.get("public_metrics") or {}
+        summary.append({
+            "id": str(post["id"]),
+            "created_at": iso_utc(post.get("created_at")),
+            "like_count": like_count(post),
+            "repost_count": int(metrics.get("repost_count") or 0),
+            "quote_count": int(metrics.get("quote_count") or 0),
+            "reply_count": reply_metric(post),
+        })
+    sequential = search_pages * SEARCH_PAGE_SECONDS
+    return {
+        "trial_post_count": limit,
+        "budget": budget,
+        "posts": summary,
+        "reads": reads,
+        "skipped": skipped,
+        "read_count": used,
+        "within_budget": not skipped and used <= budget,
+        "reply_count": reply_total,
+        "reply_page_size": SEARCH_PAGE_SIZE,
+        "reply_pages": search_pages,
+        "reply_pages_needed": pages_needed,
+        "estimate_minutes": estimate_minutes(used, sequential_seconds=sequential),
+        "estimate_message": tour_estimate_message(
+            used, name=name, handle=handle, post_count=len(chosen),
+            sequential_seconds=sequential),
+        "parallel_batch": PARALLEL_BATCH,
+        "per_read_seconds": PER_READ_SECONDS,
+        "search_page_seconds": SEARCH_PAGE_SECONDS,
+        "note": (
+            "Do not fetch followers or following. "
+            "Do not fetch likers for replies. "
+            "Recent search returns 25 posts a page even when max_results is 100. "
+            "Page the reply search until the first-level reply count matches the "
+            "posts' reply_count total or the read budget ends. "
+            "Those pages are one after another, about a minute each. "
+            "Send other independent reads in parallel batches of up to 12, under 30 a minute."
+        ),
+    }
 
 
 def referenced_ids(post, kind):
@@ -1172,12 +1585,14 @@ def draw_circle(data, me_user, scores, path, rings=3, show_names=True, width=120
 DEFAULTS = {
     "handle": None,
     "user_id": None,
+    "name": "",
     "like_weight": 1,
     "reply_weight": 3,
     "exclude": ["grok"],
     "rings": 3,
     "show_names": True,
     "first_run_days": 2,
+    "trial_post_count": TRIAL_POST_COUNT,
     "items_per_user": 3,
     "theme": "midnight",
     "windows": ["week"],
@@ -1199,14 +1614,17 @@ SUBTITLES = {
     "both": {
         "day": "Top neighbours of the last 24 hours",
         "week": "Top neighbours of the last 7 days",
+        "first": "Neighbours from your latest posts",
     },
     "likes": {
         "day": "Top likers of the last 24 hours",
         "week": "Top likers of the last 7 days",
+        "first": "Neighbours from your latest posts",
     },
     "replies": {
         "day": "Top repliers of the last 24 hours",
         "week": "Top repliers of the last 7 days",
+        "first": "Neighbours from your latest posts",
     },
 }
 
@@ -1223,6 +1641,13 @@ def hidden_user(data, uid):
 
 
 def stranger(data, uid):
+    """True when a loaded following list does not include this person.
+
+    With no following file, nobody is marked. The first report skips that
+    fetch, and an empty list would otherwise mark every neighbour.
+    """
+    if not getattr(data, "following_known", False):
+        return False
     return uid not in data.following
 
 
@@ -1285,9 +1710,13 @@ def is_good_neighbour(uid, username, ids, names):
 
 
 def build_activity(data, since, until, top, like_weight, reply_weight, mode, now,
-                   good_neighbours=None):
+                   good_neighbours=None, only_posts=None):
     items = []
     seen = set()
+    allowed = None if only_posts is None else {str(pid) for pid in only_posts}
+
+    def counts_here(pid):
+        return allowed is None or (pid is not None and str(pid) in allowed)
 
     def add_item(kind, post, author, on_id):
         if hidden_user(data, author) or post.get("id") in seen:
@@ -1309,42 +1738,60 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         })
 
     owner_posts = data.owner_post_ids()
+    starters = data.owner_original_ids
     for mention in data.mentions:
         author = mention.get("author_id")
-        parent = next(iter(referenced_ids(mention, "replied_to")), None)
-        # Top-level only: the direct parent is one of the owner's original posts.
-        # A later reply in the thread, whose parent is the owner's own reply, does not count.
-        if parent and parent in data.owner_original_ids:
+        parent = direct_reply_parent(mention)
+        # First-level only: the direct parent is an owner post or quote that
+        # starts the conversation. A later reply under the owner's reply does not.
+        if is_first_level_reply(mention, starters) and counts_here(parent):
             add_item("reply", mention, author, parent)
             continue
         if parent:
             continue
-        quoted = next((pid for pid in referenced_ids(mention, "quoted") if pid in owner_posts), None)
+        quoted = next(
+            (pid for pid in referenced_ids(mention, "quoted")
+             if pid in owner_posts and counts_here(pid)),
+            None,
+        )
         if quoted:
             add_item("quote", mention, author, quoted)
     for pid, quotes in data.quotes.items():
         for quote in quotes:
-            parent = next(iter(referenced_ids(quote, "replied_to")), None)
-            if parent and parent not in data.owner_original_ids:
+            parent = direct_reply_parent(quote)
+            if parent and not is_first_level_reply(quote, starters):
                 continue
             if parent:
-                add_item("reply", quote, quote.get("author_id"), parent)
-            else:
+                if counts_here(parent):
+                    add_item("reply", quote, quote.get("author_id"), parent)
+            elif counts_here(quote.get("_on_post") or pid):
                 add_item("quote", quote, quote.get("author_id"), quote.get("_on_post") or pid)
 
     likes_c, reposts_c = Counter(), Counter()
     reply_c, quote_c = Counter(), Counter()
+    seen_at = defaultdict(list)
     for pid, post in data.posts.items():
         if not data._in_window(post.get("created_at"), since, until):
             continue
-        for uid in data.likes.get(pid, []):
-            if not hidden_user(data, uid):
-                likes_c[uid] += 1
+        if not counts_here(pid):
+            continue
+        when = ts(post["created_at"])
+        # Likes on owner replies are not part of the score. The first report
+        # and the daily run both skip that fetch, and a missing file stays a zero.
+        if is_owner_original_post(post):
+            for uid in data.likes.get(pid, []):
+                if not hidden_user(data, uid):
+                    likes_c[uid] += 1
+                    seen_at[uid].append(when)
         for uid in data.reposts.get(pid, []):
             if not hidden_user(data, uid):
                 reposts_c[uid] += 1
+                seen_at[uid].append(when)
     for item in items:
-        (quote_c if item["kind"] == "quote" else reply_c)[item["author_id"]] += 1
+        author = item["author_id"]
+        (quote_c if item["kind"] == "quote" else reply_c)[author] += 1
+        if author:
+            seen_at[author].append(item["created_at"])
 
     def points(uid, which):
         likes = likes_c[uid] if which != "replies" else 0
@@ -1368,7 +1815,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             "id": uid,
             "name": name,
             "username": username,
-            "stranger": uid not in data.following,
+            "stranger": stranger(data, uid),
             "good": is_good_neighbour(uid, username, good_ids, good_names),
             "user": user if user.get("id") else {**user, "id": uid, "username": username, "name": name},
         }
@@ -1423,6 +1870,28 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         row["username"],
     ))
 
+    share_counts = []
+    for uid in sorted(people, key=lambda item: str(item)):
+        if likes_c[uid] + reposts_c[uid] + reply_c[uid] + quote_c[uid] <= 0:
+            continue
+        info = describe(uid)
+        times = seen_at.get(uid) or []
+        share_counts.append({
+            "user_id": str(uid),
+            "handle": info["username"],
+            "name": info["name"],
+            "replies": reply_c[uid],
+            "quotes": quote_c[uid],
+            "reposts": reposts_c[uid],
+            "likes": likes_c[uid],
+            "first_seen": (
+                min(times).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if times else ""
+            ),
+            "last_seen": (
+                max(times).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if times else ""
+            ),
+        })
+
     def catch_person(uid, fallback=None):
         chosen = None
         for post in data.originals.get(uid) or []:
@@ -1468,6 +1937,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         "interactions": interactions,
         "catch_up": catch_up,
         "ranked": ranked,
+        "share_counts": share_counts,
         "has_good_neighbours": bool(good),
         "catch_hint": not good,
         "all_caught_up": not catch_up and bool(good),
@@ -1552,10 +2022,7 @@ def period_line(window, since, now, label):
     if window == "week":
         return "Last 7 days"
     if window == "first":
-        span = label or "Last 2 days"
-        if span.lower().startswith("last "):
-            span = span[0].lower() + span[1:]
-        return f"First report · {span}"
+        return TOUR_TITLE
     if window == "custom":
         return label or "Custom period"
     return label or "This report"
@@ -1731,7 +2198,7 @@ def public_greeting(row, now):
 
 
 def write_chat_report(activity, path, handle, since, now, label, top=10, items_per_user=3,
-                      show=CHAT_SHOW, window="day"):
+                      show=CHAT_SHOW, window="day", intro=None):
     totals = activity["totals"]
     people = activity["threads"] + activity["interactions"] + activity["catch_up"]
     legend = []
@@ -1745,12 +2212,30 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     if legend:
         lines.append(" · ".join(legend))
     lines.append("")
+    tour = window == "first"
+    if intro:
+        for row in intro.splitlines():
+            if row.strip():
+                lines.append(row)
+        lines.append("")
+
+    def open_section(title, explainer):
+        lines.append(f"### {title}")
+        lines.append("")
+        if explainer:
+            lines.append(explainer)
+            lines.append("")
+
     flowers = activity["interactions"]
     if not flowers:
-        lines.append("No replies, likes, or reposts in this stretch.")
+        if tour:
+            open_section("💐 Flowers", TOUR_FLOWERS)
+            lines.append("No replies, likes, or reposts in this stretch.")
+            lines.append("")
+        else:
+            lines.append("No replies, likes, or reposts in this stretch.")
     else:
-        lines.append("### 💐 Flowers")
-        lines.append("")
+        open_section("💐 Flowers", TOUR_FLOWERS if tour else None)
         for row in flowers[:show]:
             lines.extend(flower_lines(row))
         extra = len(flowers) - show
@@ -1760,17 +2245,24 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     catch = activity["catch_up"]
     if not catch:
         if activity.get("all_caught_up"):
-            lines.append("You're all caught up with your good neighbours 🎉")
+            sentence = "You're all caught up with your good neighbours 🎉"
         elif activity.get("catch_hint"):
-            lines.append("No one to catch up with in this stretch.")
-            lines.append("Add people to your good neighbours list to keep up with them here.")
+            sentence = "No one to catch up with in this stretch."
         else:
-            lines.append("No recent original posts from your good neighbours.")
+            sentence = "No recent original posts from your good neighbours."
+        if tour:
+            open_section("🏡 What's new", TOUR_WHATS_NEW)
+            lines.append(sentence)
+            lines.append("")
+        else:
+            lines.append(sentence)
+            if activity.get("catch_hint") and not activity.get("all_caught_up"):
+                lines.append("Add people to your good neighbours list to keep up with them here.")
     else:
-        lines.append("### 🏡 What's new")
-        if activity.get("catch_hint"):
+        open_section("🏡 What's new", TOUR_WHATS_NEW if tour else None)
+        if activity.get("catch_hint") and not tour:
             lines.append("Add people to your good neighbours list to keep up with them here.")
-        lines.append("")
+            lines.append("")
         for person in catch[:show]:
             lines.extend(catch_lines(person))
         extra = len(catch) - show
@@ -1779,10 +2271,14 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
             lines.append("")
     unanswered, answered = greeting_rows(activity["threads"])
     if not unanswered and not answered:
-        lines.append("No replies or quote posts in this stretch.")
+        if tour:
+            open_section("👋 Replies", TOUR_REPLIES)
+            lines.append("No replies or quote posts in this stretch.")
+            lines.append("")
+        else:
+            lines.append("No replies or quote posts in this stretch.")
     else:
-        lines.append("### 👋 Replies")
-        lines.append("")
+        open_section("👋 Replies", TOUR_REPLIES if tour else None)
         if not unanswered:
             lines.append("No replies waiting on you.")
             lines.append("")
@@ -1805,17 +2301,22 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     }
 
 
-def write_thanks(path, thanks):
+def write_thanks(path, thanks, preface=None, closing=None):
+    parts = []
+    if preface:
+        parts.append(preface.rstrip() + "\n\n")
     if not thanks:
-        text = "No neighbours to thank in this stretch.\n"
+        parts.append("No neighbours to thank in this stretch.\n")
     else:
-        text = (
+        parts.append(
             f"{thanks['text']}\n\n"
             f"[Post your thank-you]({thanks['intent']})\n\n"
             f"{thanks.get('note') or THANK_YOU_NOTE}\n"
         )
+    if closing:
+        parts.append("\n" + closing.rstrip() + "\n")
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(text)
+        fh.write("".join(parts))
 
 
 def wrap_text(draw, text, face, width):
@@ -2114,7 +2615,9 @@ def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per
         if not posts:
             lines.append("No posts in this window.")
         for when, pid, post in posts:
-            likes = sum(1 for uid in data.likes.get(pid, []) if not hidden_user(data, uid))
+            likes = 0
+            if is_owner_original_post(post):
+                likes = sum(1 for uid in data.likes.get(pid, []) if not hidden_user(data, uid))
             reposts = sum(1 for uid in data.reposts.get(pid, []) if not hidden_user(data, uid))
             text = snippet(post.get("text")) or "Post"
             lines.append(
@@ -2134,6 +2637,8 @@ def main():
     parser.add_argument("--config", default=os.path.join(here, "config.json"))
     parser.add_argument("--handle")
     parser.add_argument("--user-id", dest="user_id")
+    parser.add_argument("--name",
+                        help="display name from get_users_me; blank falls back to @handle")
     parser.add_argument("--data", default=os.path.join(here, "data"))
     parser.add_argument("--out", default=here)
     parser.add_argument("--now", help="UTC ISO time the data was fetched (default: now)")
@@ -2157,7 +2662,17 @@ def main():
     parser.add_argument("--fresh-hours", dest="fresh_hours", type=float,
                         help="owner override for how many hours a report stays fresh")
     parser.add_argument("--first-run", action="store_true",
-                        help="report the last first_run_days and always draw the picture")
+                        help="welcome tour: the latest original posts and quotes, no day window")
+    parser.add_argument("--trial-plan", action="store_true",
+                        help="print the welcome-tour reads for posts already saved in --data")
+    parser.add_argument("--estimate-reads", type=int, default=None,
+                        help="print the minute estimate for this many X reads")
+    parser.add_argument("--trial-post-count", dest="trial_post_count", type=int, default=None,
+                        help="how many original posts and quotes the welcome tour uses (default 5)")
+    parser.add_argument("--picture-only", action="store_true",
+                        help="draw the neighbours picture from saved data and skip the report")
+    parser.add_argument("--read-budget", dest="read_budget", type=int, default=None,
+                        help="cap for --trial-plan (default 15)")
     parser.add_argument("--report-card", action="store_true",
                         help="also write the report card PNG (off by default)")
     parser.add_argument("--picture", dest="picture", action=argparse.BooleanOptionalAction,
@@ -2181,6 +2696,31 @@ def main():
             cfg[key] = as_list(value) if key in ("exclude", "windows") else value
     cfg["exclude"] = [item.lstrip("@") for item in as_list(cfg.get("exclude"))]
     cfg["windows"] = as_list(cfg.get("windows"))
+    if args.estimate_reads is not None and not args.trial_plan:
+        minutes = estimate_minutes(args.estimate_reads)
+        print(json.dumps({
+            "reads": int(args.estimate_reads),
+            "estimate_minutes": minutes,
+            "parallel_batch": PARALLEL_BATCH,
+            "per_read_seconds": PER_READ_SECONDS,
+            "per_minute_cap": READS_PER_MINUTE,
+            "message": estimate_message(args.estimate_reads),
+        }, ensure_ascii=False))
+        return
+    if args.trial_plan:
+        if not os.path.isdir(args.data):
+            parser.error(f"data folder not found: {args.data}")
+        limit = int(cfg.get("trial_post_count") or TRIAL_POST_COUNT)
+        budget = TRIAL_READ_BUDGET if args.read_budget is None else int(args.read_budget)
+        if limit < 1:
+            parser.error("trial_post_count must be at least 1")
+        if budget < 1:
+            parser.error("read budget must be at least 1")
+        payload = trial_plan(
+            load_saved_posts(args.data), limit=limit, budget=budget,
+            name=cfg.get("name"), handle=cfg.get("handle"))
+        print(json.dumps(payload, ensure_ascii=False))
+        return
     if not cfg["handle"] or not cfg["user_id"]:
         parser.error("handle and user_id are required (config.json or --handle/--user-id)")
     cfg["handle"] = str(cfg["handle"]).lstrip("@")
@@ -2202,7 +2742,7 @@ def main():
     cfg["per_day"] = as_bool(cfg.get("per_day"))
     if cfg.get("report") not in REPORTS:
         parser.error("report must be likes, replies, or both")
-    needs_pillow = args.report_card or args.picture is not False
+    needs_pillow = args.report_card or args.picture is not False or args.picture_only
     if needs_pillow and not args.no_image:
         try:
             import PIL  # noqa: F401
@@ -2226,6 +2766,7 @@ def main():
     me.update({k: v for k, v in stored.items() if v not in (None, "")})
     output = {}
     mode = cfg["report"]
+    trial_ids = None
     if args.since:
         since_at = ts(args.since)
         if since_at.tzinfo is None:
@@ -2234,11 +2775,16 @@ def main():
             parser.error("--since must be earlier than --now")
         windows = [("fresh", since_at, "Since your last report")]
     elif args.first_run:
-        first_days = int(cfg.get("first_run_days") or 2)
-        if first_days < 1:
-            parser.error("first_run_days must be at least 1")
-        first_label = "Last 24 hours" if first_days == 1 else f"Last {first_days} days"
-        windows = [("first", first_days, first_label)]
+        limit = int(cfg.get("trial_post_count") or TRIAL_POST_COUNT)
+        if limit < 1:
+            parser.error("trial_post_count must be at least 1")
+        chosen = select_trial_posts(data.posts.values(), limit)
+        trial_ids = [str(post["id"]) for post in chosen]
+        if chosen:
+            span_start = min(ts(post["created_at"]) for post in chosen)
+        else:
+            span_start = now - timedelta(minutes=1)
+        windows = [("first", span_start, TOUR_TITLE)]
         if args.picture is None:
             args.picture = True
     elif args.days:
@@ -2253,11 +2799,54 @@ def main():
             )
         ]
     zone = owner_zone(cfg.get("timezone"))
+    import report_page
+    if args.picture_only:
+        if args.no_image:
+            parser.error("--picture-only draws the picture; do not pass --no-image")
+        span_days = int(args.days or 7)
+        if span_days < 1:
+            parser.error("days must be at least 1")
+        since = now - timedelta(days=span_days)
+        activity = build_activity(
+            data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
+            good_neighbours=neighbours)
+        picture_path = os.path.join(args.out, "x_neighbours_picture.png")
+        if span_days == 7:
+            subtitle = SUBTITLES[mode].get("week", "Top neighbours of the last 7 days")
+        elif span_days == 1:
+            subtitle = SUBTITLES[mode].get("day", "Top neighbours of the last 24 hours")
+        else:
+            subtitle = f"Top neighbours of the last {span_days} days"
+        draw_circle(
+            data, me, activity["ranked"], picture_path,
+            rings=cfg["rings"], show_names=cfg["show_names"],
+            subtitle=subtitle, theme=cfg["theme"])
+        text, intent = thank_you_post(now, zone)
+        print(json.dumps({
+            "picture": picture_path,
+            "picture_asset": "asset:" + os.path.basename(picture_path),
+            "picture_alt": report_page.PICTURE_ALT,
+            "headline": "Your neighbours picture",
+            "days": span_days,
+            "thank_you": {
+                "text": text,
+                "intent": intent,
+                "link_label": "Post your thank-you",
+                "note": THANK_YOU_NOTE,
+            },
+            "messages": [{
+                "part": "picture",
+                "text": "Your neighbours picture",
+                "images": [picture_path],
+            }],
+        }, ensure_ascii=False))
+        return
     for key, span, label in windows:
         since = span if isinstance(span, datetime) else now - timedelta(days=span)
         activity = build_activity(
             data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
-            good_neighbours=neighbours)
+            good_neighbours=neighbours,
+            only_posts=trial_ids if key == "first" else None)
         md_path = os.path.join(args.out, f"report_{key}.md")
         png_path = os.path.join(args.out, f"report_{key}.png")
         text, intent = thank_you_post(now, zone)
@@ -2278,22 +2867,44 @@ def main():
                 theme=cfg["theme"])
         thanks_path = os.path.join(args.out, f"report_{key}_thanks.md")
         more_path = os.path.join(args.out, f"report_{key}_more.json")
+        intro = (
+            trial_intro(len(trial_ids or []), name=cfg.get("name"), handle=cfg.get("handle"))
+            if key == "first" else None
+        )
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),
-            window=key)
+            window=key, intro=intro)
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
-        write_thanks(thanks_path, thanks)
+        write_thanks(
+            thanks_path, thanks,
+            preface=TOUR_THANKS if key == "first" else None,
+            closing=tour_next_markdown() if key == "first" else None)
         if key == "week":
             with open(thanks_path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + WEEKLY_FEEDBACK + "\n")
+        extra = ""
         if cfg["per_post"] or cfg["per_day"]:
+            extra = extra_sections(
+                data, since, now, cfg["handle"], cfg["top"], like_weight, reply_weight,
+                cfg["per_post"], cfg["per_day"])
             with open(md_path, "a", encoding="utf-8") as fh:
-                fh.write("\n" + extra_sections(
-                    data, since, now, cfg["handle"], cfg["top"], like_weight, reply_weight,
-                    cfg["per_post"], cfg["per_day"]) + "\n")
+                fh.write("\n" + extra + "\n")
+        page = report_page.build_page_model(
+            activity, since, now, label, window=key, intro=intro, thanks=thanks)
+        if extra.strip():
+            page["blocks"] = report_page.insert_before_thanks(
+                page["blocks"], report_page.blocks_from_extra_markdown(extra))
+        if picture_path:
+            page = report_page.apply_overrides(
+                page, picture_asset_name="asset:" + os.path.basename(picture_path))
+        if key == "first":
+            page["headline"] = tour_delivery_line(len(trial_ids or []))
+        canvas_path = os.path.join(args.out, f"report_{key}.canvas.tsx")
+        model_path = os.path.join(args.out, f"report_{key}_page.json")
+        report_page.write_page(page, canvas_path, model_path)
         if args.report_card and not args.no_image:
             render_report(
                 activity, png_path, cfg["handle"], since, now, label,
@@ -2311,7 +2922,20 @@ def main():
             "more_json": more_path,
             "more_counts": {name: len(rows) for name, rows in more.items()},
             "thank_you": thanks,
+            "page_title": page["title"],
+            "headline": page["headline"],
+            "page_canvas": canvas_path,
+            "page_model": model_path,
             "messages": [
+                {
+                    "part": "page",
+                    "text": page["headline"],
+                    "page_title": page["title"],
+                    "page_canvas": canvas_path,
+                    "images": [],
+                },
+            ],
+            "fallback_messages": [
                 {"part": "sections_1_to_3", "text_file": md_path, "images": []},
                 {
                     "part": "section_4",
@@ -2323,6 +2947,20 @@ def main():
                 },
             ],
         }
+        if key == "first":
+            output[key]["trial"] = {
+                "posts": trial_ids or [],
+                "post_count": len(trial_ids or []),
+                "trial_post_count": int(cfg.get("trial_post_count") or TRIAL_POST_COUNT),
+                "read_budget": TRIAL_READ_BUDGET,
+            }
+            output[key]["intro"] = intro
+            output[key]["community_offer"] = False
+            output[key]["share_offer"] = False
+            output[key]["next_steps"] = {
+                "prompt": "Want this as a daily report, a weekly report, or only when you ask?",
+                "options": ["Daily report", "Weekly report", "Only when I ask"],
+            }
         if cfg.get("state"):
             import report_state
             report_state.record(
@@ -2334,7 +2972,8 @@ def main():
                 override=cfg.get("fresh_hours"))
         if key == "week":
             output[key]["feedback_line"] = WEEKLY_FEEDBACK
-        else:
+            output[key]["picture_nudge"] = PICTURE_NUDGE
+        elif key != "first":
             suggestions = suggest_good_neighbours(
                 activity, neighbours, top=cfg["top"])
             if suggestions:
@@ -2349,6 +2988,16 @@ def main():
             output[key]["report_png"] = png_path
         if picture_path:
             output[key]["picture"] = picture_path
+            output[key]["picture_asset"] = "asset:" + os.path.basename(picture_path)
+            output[key]["picture_alt"] = report_page.PICTURE_ALT
+        if key != "first" and neighbours:
+            import good_neighbours_page
+            gn_canvas = os.path.join(args.out, "good_neighbours.canvas.tsx")
+            gn_model_path = os.path.join(args.out, "good_neighbours_page.json")
+            gn = good_neighbours_page.build_model(neighbours, activity["catch_up"])
+            good_neighbours_page.write_page(gn, gn_canvas, gn_model_path)
+            output[key]["good_neighbours_page"] = good_neighbours_page.page_output(
+                gn, gn_canvas, gn_model_path)
     print(json.dumps(output, ensure_ascii=False))
 
 

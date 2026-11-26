@@ -62,9 +62,9 @@ def latest_by_owner(repo):
             continue
         owner = ""
         if isinstance(doc, dict) and isinstance(doc.get("owner"), dict):
-            owner = str(doc["owner"].get("user_id") or "")
-        folder_owner = relpath.split("/")[1]
-        if owner and owner != folder_owner:
+            owner = rules.canonical_user_id(doc["owner"].get("user_id"))
+        folder_owner = rules.canonical_user_id(relpath.split("/")[1])
+        if not folder_owner or owner != folder_owner:
             continue
         grouped[folder_owner].append((when, relpath, doc))
     latest = {}
@@ -74,8 +74,49 @@ def latest_by_owner(repo):
     return latest
 
 
-def norm_path(path):
-    return str(path or "").strip().replace("\\", "/").lstrip("./")
+def user_sort_key(user_id):
+    text = str(user_id)
+    try:
+        return (0, int(text))
+    except ValueError:
+        return (1, text)
+
+
+def at_least(value, floor):
+    """Integer at least `floor`. Missing or lower values use the floor."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return floor
+    if number < floor:
+        return floor
+    return number
+
+
+def contained_relpath(repo, path):
+    """Clean relative path that stays inside repo after symlinks resolve.
+
+    Empty when the path is unsafe or resolves outside the repository.
+    """
+    rel = rules.clean_relpath(path)
+    if not rel:
+        return ""
+    root = os.path.realpath(repo)
+    target = os.path.realpath(os.path.join(root, *rel.split("/")))
+    try:
+        inside = os.path.commonpath([root, target]) == root
+    except ValueError:
+        return ""
+    if not inside:
+        return ""
+    return rel
+
+
+def tag_list(tags):
+    """Tags as written. A string must not be split into letters."""
+    if not isinstance(tags, list):
+        return []
+    return [tag for tag in tags if isinstance(tag, str) and tag]
 
 
 def recommendation(owner_id, owner_handle, when, relpath, handle, tags):
@@ -85,7 +126,7 @@ def recommendation(owner_id, owner_handle, when, relpath, handle, tags):
         "recommended_at": rules.iso(when),
         "submission": relpath,
         "handle": str(handle).lstrip("@"),
-        "tags": list(tags or []),
+        "tags": tag_list(tags),
     }
 
 
@@ -107,7 +148,7 @@ def rows_from_submission(doc, relpath, owner_id, owner_handle, when):
     for row in doc.get("neighbours") or []:
         if not isinstance(row, dict):
             continue
-        user_id = str(row.get("user_id") or "")
+        user_id = rules.canonical_user_id(row.get("user_id"))
         handle = str(row.get("handle") or "").lstrip("@")
         if not user_id or user_id in blocked_ids or handle.lower() in blocked_handles:
             continue
@@ -125,10 +166,11 @@ def rows_from_submission(doc, relpath, owner_id, owner_handle, when):
 
 def build(repo, source_commit, generated_at):
     build_doc = share.load_build(repo)
-    minimum = int(build_doc.get("min_recommendations") or rules.MIN_RECOMMENDATIONS)
-    interval = int(build_doc.get("submission_interval_days") or rules.SUBMISSION_INTERVAL_DAYS)
+    minimum = at_least(build_doc.get("min_recommendations"), rules.MIN_RECOMMENDATIONS)
+    interval = at_least(build_doc.get("submission_interval_days"), rules.SUBMISSION_INTERVAL_DAYS)
     waiver = build_doc.get("founding_waiver") if isinstance(build_doc.get("founding_waiver"), dict) else {}
-    waiver_rel = norm_path(waiver.get("submission"))
+    raw_waiver = str(waiver.get("submission") or "").strip()
+    waiver_rel = contained_relpath(repo, raw_waiver)
     waiver_owner = str(waiver.get("owner_id") or rules.FOUNDING_OWNER_ID)
     waiver_handle = str(waiver.get("owner_handle") or rules.FOUNDING_OWNER_HANDLE).lstrip("@")
     opted = set(share.opted_out_ids(repo))
@@ -138,13 +180,15 @@ def build(repo, source_commit, generated_at):
     grouped = defaultdict(list)
     founding_ids = set()
     warnings = []
+    if raw_waiver and not waiver_rel:
+        warnings.append("founding waiver path is not a safe exact path inside the repository")
 
     for owner, (when, relpath, doc) in latest.items():
         file_owner = owner
         file_handle = ""
         if isinstance(doc.get("owner"), dict):
             file_handle = str(doc["owner"].get("handle") or "")
-        if norm_path(relpath) == waiver_rel:
+        if rules.clean_relpath(relpath) == waiver_rel:
             continue
         if file_owner in banned:
             continue
@@ -179,7 +223,10 @@ def build(repo, source_commit, generated_at):
             current = by_owner.get(rec["owner_id"])
             if current is None or rec["recommended_at"] >= current["recommended_at"]:
                 by_owner[rec["owner_id"]] = rec
-        unique = sorted(by_owner.values(), key=lambda rec: (rec["recommended_at"], rec["owner_id"]))
+        unique = sorted(
+            by_owner.values(),
+            key=lambda rec: (rec["recommended_at"], user_sort_key(rec["owner_id"])),
+        )
         count = len(unique)
         founding = user_id in founding_ids
         if not founding and count < minimum:
@@ -212,7 +259,7 @@ def build(repo, source_commit, generated_at):
         }
 
     owners = {}
-    for owner, (when, relpath, doc) in sorted(latest.items()):
+    for owner, (when, relpath, doc) in sorted(latest.items(), key=lambda item: user_sort_key(item[0])):
         handle = ""
         if isinstance(doc.get("owner"), dict):
             handle = str(doc["owner"].get("handle") or "").lstrip("@")
@@ -225,7 +272,7 @@ def build(repo, source_commit, generated_at):
             "latest_submission": relpath,
         }
 
-    ordered = {key: neighbours[key] for key in sorted(neighbours)}
+    ordered = {key: neighbours[key] for key in sorted(neighbours, key=user_sort_key)}
     document = {
         "format": rules.FORMAT_GLOBAL,
         "version": rules.GLOBAL_VERSION,

@@ -104,7 +104,7 @@ The global file lists an account after two owners recommend it. `recommended_by`
 
 ### Founding list
 
-The global file is empty until submissions arrive. One path, set in `global/build.json` under `founding_waiver.submission`, may populate the list from a single file. That path is blank in this repo. After a new bot submits through the normal share flow and the file is merged, the maintainer sets `submission` to that exact path, keeps `owner_id` as `founding` and `owner_handle` as `founding-submission`, and labels the pull request `maintainer-waiver`. The displayed credit is that neutral identity, not the test bot and not a personal handle. Any other file still needs two recommendations. Details are in [founding/README.md](founding/README.md).
+The global file is empty until submissions arrive. One path, set in `global/build.json` under `founding_waiver.submission`, may populate the list from a single file. That path is blank in this repo. After a new bot submits through the normal share flow and the file is merged, the maintainer sets `submission` to that exact path, keeps `owner_id` as `founding` and `owner_handle` as `founding-submission`, and labels the pull request `maintainer-waiver`. The submission file keeps that owner's real user id and handle, because the path is `submissions/<user id>/`. The displayed credit is the neutral identity from `build.json`, not the test bot and not a personal handle. There is no pre-made founding file in this repo. Any other file still needs two recommendations. Details are in [founding/README.md](founding/README.md).
 
 ### How reviews work
 
@@ -124,7 +124,7 @@ These are not in the repo, because they are accounts and secrets:
 
 ### Try it with a new bot
 
-1. Install a new bot from the current `main` (or pull an existing one and opt in).
+1. Install a new bot from the current `main`, or from `v3` while that branch is the one under test. Set `share_branch` in `config.json` to the same branch (or pass `--base`). Then opt in.
 2. On the first report the bot asks once about community mode. Say yes.
 3. Run reports until `data/` has real interactions. Ask the bot to share. The default window is 90 days. A short test can ask for 7 days when that week meets the lower bar (score at least 8, and at least two replies or quotes).
 4. Post the one-time code from the X account yourself. Give the bot the post id. The bot does not post.
@@ -157,7 +157,7 @@ These are not in the repo, because they are accounts and secrets:
   "per_post": false,
   "per_day": false,
   "timezone": "",
-  "community": false
+  "share_branch": ""
 }
 ```
 
@@ -175,7 +175,7 @@ These are not in the repo, because they are accounts and secrets:
 | `windows` | `week` by default. `day` is the daily report |
 | `top` | How many people are ranked for Flowers and for Catch up when the good neighbours list is empty. The chat still shows five at a time. Default 10 |
 | `timezone` | IANA name for the thank-you date and the Sunday reminder, such as `Europe/Stockholm`. Blank means UTC. Monday release times in `versions/` are UTC |
-| `community` | Optional mirror of community mode. The live flag is `community.json` in the bot store, default off. Individual mode does not read `versions/` or the global list |
+| `share_branch` | Branch for the Monday raw URLs and for a share pull request. Blank uses the checked-out branch, then `main`. Set `v3` to target that branch. Community mode itself is not a config key. It lives in `community.json` in the bot store, default off |
 | `fresh_hours` | Optional. How many hours until the bot may offer a new report. Omit it and the bot estimates: 1 hour at 60 or more interactions a day, 3 hours from 15 to 59, 8 hours under 15 |
 | `good_neighbours` | Optional path to the personal list. Prefer `--good-neighbours`, because the file lives outside the repo. A missing file is an empty list. At most 20 people |
 | `report` | `both` (default), `likes`, or `replies` |

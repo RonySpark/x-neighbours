@@ -16,6 +16,9 @@ x_neighbours_*.png
 /global_neighbours.neighbours
 /*.neighbours
 
+# Local state a test bot writes. Never commit it.
+test-state/
+
 __pycache__/
 *.py[cod]
 .venv/

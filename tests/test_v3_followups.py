@@ -80,10 +80,16 @@ class BranchTargetTest(unittest.TestCase):
             self.assertEqual(rules.resolve_branch("", "v3", folder), "v3")
             self.assertEqual(rules.safe_branch("../v3"), "")
             self.assertEqual(rules.safe_branch("v3"), "v3")
-            head = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=ROOT, check=True, capture_output=True, text=True)
-            self.assertEqual(rules.checked_out_branch(ROOT), head.stdout.strip())
+            checkout = os.path.join(folder, "checkout")
+            os.makedirs(os.path.join(checkout, ".git"))
+            with open(os.path.join(checkout, ".git", "HEAD"), "w", encoding="utf-8") as fh:
+                fh.write("ref: refs/heads/v3\n")
+            self.assertEqual(rules.checked_out_branch(checkout), "v3")
+            self.assertEqual(rules.resolve_branch("", "", checkout), "v3")
+            with open(os.path.join(checkout, ".git", "HEAD"), "w", encoding="utf-8") as fh:
+                fh.write("abc123\n")
+            self.assertEqual(rules.checked_out_branch(checkout), "")
+            self.assertEqual(rules.resolve_branch("", "", checkout), "main")
         finally:
             shutil.rmtree(folder)
 

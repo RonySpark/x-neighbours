@@ -7,6 +7,11 @@ on:
         description: One line for versions/latest.json
         required: true
         type: string
+      release_notes:
+        description: Optional. 3 to 5 short lines for the owner, separated by |
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -25,7 +30,8 @@ jobs:
             --repo . \
             --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --changelog "${{ github.event.inputs.changelog }}" \
-            --source-commit "$(git rev-parse --short HEAD)"
+            --source-commit "$(git rev-parse --short HEAD)" \
+            --notes "${{ github.event.inputs.release_notes }}"
 
       - name: Tag and publish the GitHub Release
         env:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""First report: five originals or quotes, no stranger marks, a time estimate.
+"""Welcome tour: five originals or quotes, no stranger marks, a time estimate.
 
 Handles, names, and ids here are fictional. Nothing in this file is a real account.
 """
@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOW = "2026-11-16T12:00:00Z"
 
 
-def starter(pid, created, likes=1, reposts=1, quotes=1):
+def starter(pid, created, likes=1, reposts=1, quotes=1, replies=0):
     return {
         "id": pid,
         "created_at": created,
@@ -27,6 +27,7 @@ def starter(pid, created, likes=1, reposts=1, quotes=1):
             "like_count": likes,
             "repost_count": reposts,
             "quote_count": quotes,
+            "reply_count": replies,
         },
     }
 
@@ -75,17 +76,67 @@ class TrialPlanTest(unittest.TestCase):
         rows = [row for row in self._posts() if row["id"] != "q1"]
         plan = xn.trial_plan(rows, limit=5, budget=15)
         self.assertEqual(len(plan["posts"]), 5)
+        self.assertEqual(plan["reply_pages"], 0)
         self.assertLessEqual(plan["read_count"], 15)
         self.assertEqual(plan["read_count"], 15)
         self.assertFalse(plan["within_budget"])
         tools = [row["tool"] for row in plan["reads"]]
         self.assertEqual(tools[0], "get_users_posts")
-        self.assertEqual(tools[1], "search_posts_all")
+        self.assertNotIn("search_posts_all", tools)
         self.assertEqual(tools.count("get_posts_liking_users"), 5)
         self.assertNotIn("r9", [row.get("id") for row in plan["reads"]])
         skipped_ids = [row.get("id") for row in plan["skipped"]]
         self.assertTrue(skipped_ids)
         self.assertTrue(all(row["tool"] == "get_posts_quoted_posts" for row in plan["skipped"]))
+
+    def test_reply_pages_follow_reply_volume_and_slow_the_estimate(self):
+        posts = []
+        for index in range(5):
+            posts.append(starter(
+                f"p{index}",
+                f"2026-11-16T{10 + index:02d}:00:00Z",
+                likes=1,
+                reposts=1 if index == 0 else 0,
+                quotes=0,
+                replies=15,
+            ))
+        plan = xn.trial_plan(posts, limit=5, budget=15)
+        self.assertEqual(plan["reply_count"], 75)
+        self.assertEqual(plan["reply_page_size"], 25)
+        self.assertEqual(plan["reply_pages_needed"], 3)
+        self.assertEqual(plan["reply_pages"], 3)
+        search = [row for row in plan["reads"] if row["tool"] == "search_posts_all"]
+        self.assertEqual(len(search), 1)
+        self.assertEqual(search[0]["count"], 3)
+        self.assertIn("25", search[0]["paging"])
+        self.assertIn("first-level", search[0]["paging"])
+        self.assertIn("Do not stop after one extra page", search[0]["paging"])
+        self.assertEqual(plan["read_count"], 10)
+        self.assertEqual(plan["estimate_minutes"], 3)
+        self.assertIn("about 3 minutes", plan["estimate_message"])
+        self.assertEqual(xn.estimate_minutes(10, sequential_seconds=180), 3)
+        self.assertEqual(xn.estimate_minutes(15), 1)
+
+    def test_reply_pages_stop_when_the_budget_ends(self):
+        posts = [
+            starter(
+                f"p{index}",
+                f"2026-11-16T{10 + index:02d}:00:00Z",
+                likes=1,
+                reposts=0,
+                quotes=0,
+                replies=100,
+            )
+            for index in range(5)
+        ]
+        plan = xn.trial_plan(posts, limit=5, budget=15)
+        self.assertEqual(plan["reply_pages_needed"], 20)
+        self.assertEqual(plan["reply_pages"], 14)
+        self.assertEqual(plan["read_count"], 15)
+        self.assertFalse(plan["within_budget"])
+        tools = [row["tool"] for row in plan["reads"]]
+        self.assertNotIn("get_posts_liking_users", tools)
+        self.assertEqual(plan["estimate_minutes"], 14)
 
     def test_estimate_uses_reads_time_and_parallelism(self):
         self.assertEqual(xn.estimate_minutes(0), 0)
@@ -213,6 +264,7 @@ class TrialReportCommandTest(unittest.TestCase):
             "--now", "2026-11-16T12:00:00Z",
             "--first-run",
             "--no-picture",
+            "--good-neighbours", os.path.join(ROOT, "examples", "few", "good_neighbours.json"),
             "--config", os.path.join(ROOT, "config.example.json"),
         ]
         result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
@@ -227,22 +279,33 @@ class TrialReportCommandTest(unittest.TestCase):
         )
         with open(payload["report_md"], encoding="utf-8") as fh:
             report = fh.read()
-        self.assertTrue(report.startswith("First report"))
+        self.assertTrue(report.startswith("Welcome tour"))
         self.assertNotIn("Old Fan", report)
         self.assertIn("New Fan", report)
         self.assertNotIn("👤?", report)
         self.assertNotIn("add_question", payload)
         self.assertNotIn("suggest_good_neighbours", payload)
+        self.assertNotIn("good_neighbours_page", payload)
         self.assertFalse(payload["community_offer"])
         self.assertFalse(payload["share_offer"])
-        self.assertIn("Flowers", payload["intro"])
-        self.assertIn("Community sharing can wait until later.", payload["intro"])
-        self.assertEqual(payload["intro"].count("Community"), 1)
+        self.assertTrue(payload["intro"].startswith("Here's how X Neighbours works."))
+        intro_lines = [line for line in payload["intro"].splitlines() if line.strip()]
+        self.assertGreaterEqual(len(intro_lines), 2)
+        self.assertLessEqual(len(intro_lines), 3)
+        self.assertIn("good neighbours", payload["intro"].lower())
+        self.assertIn("neighbours picture", payload["intro"].lower())
+        self.assertIn("community list", payload["intro"].lower())
         self.assertIn(payload["intro"], report)
+        self.assertIn(xn.TOUR_FLOWERS, report)
         self.assertNotIn("Add to good neighbours", report)
-        self.assertNotIn("good neighbours list", report)
         self.assertNotIn("Join the community", report)
-        self.assertNotIn("share", payload["intro"].lower().split("community sharing")[0])
+        self.assertNotIn("share", payload["intro"].lower())
+        with open(payload["thanks_md"], encoding="utf-8") as fh:
+            thanks = fh.read()
+        self.assertIn(xn.TOUR_THANKS, thanks)
+        self.assertIn(xn.TOUR_NEXT_HEADING, thanks)
+        self.assertIn("daily, weekly, or only when you ask", thanks)
+        self.assertIn(xn.TOUR_NEXT_LATER, thanks)
 
         plan = subprocess.run(
             [sys.executable, os.path.join(ROOT, "x_neighbours.py"),

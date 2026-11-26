@@ -571,10 +571,28 @@ def should_fetch_likers(post, now):
 
 TRIAL_POST_COUNT = 5
 TRIAL_READ_BUDGET = 15
+# Recent search returns 25 posts a page even when max_results is 100.
+SEARCH_PAGE_SIZE = 25
+# Reply pages wait on each other. A real tour spent about a minute a page.
+SEARCH_PAGE_SECONDS = 60
+TOUR_TITLE = "Welcome tour"
+TOUR_FLOWERS = "Flowers are the people who replied, liked, or reposted you."
+TOUR_WHATS_NEW = "What's new is a post you have not caught up with yet."
+TOUR_REPLIES = "Replies waiting means they wrote to you and you have not answered yet."
+TOUR_THANKS = "The picture is a thank-you you can save and attach on X."
+TOUR_NEXT_HEADING = "What's next"
+TOUR_NEXT_CHOICE = (
+    "You can have the report daily, weekly, or only when you ask. "
+    "I'll ask right after this page."
+)
+TOUR_NEXT_LATER = (
+    "Good neighbours, a picture on its own, and the community list come after this tour."
+)
+PICTURE_NUDGE = "Want a neighbours picture to post? Ask anytime and I'll make one."
 
 
 def trial_intro(count):
-    """Short welcome on the first report only. No picker, no community ask."""
+    """Opening lines of the welcome tour. No picker and no community ask."""
     count = int(count or 0)
     if count == 1:
         scope = "your latest post"
@@ -582,43 +600,72 @@ def trial_intro(count):
         scope = f"your {count} latest posts"
     else:
         scope = "your latest posts"
+    return "\n".join([
+        "Here's how X Neighbours works.",
+        f"This welcome tour is {scope}, on the same kind of page a later report uses.",
+        "The bot can write a report, show good neighbours, make a neighbours picture, "
+        "or open the community list.",
+    ])
+
+
+def tour_next_markdown():
     return (
-        "X Neighbours shows who replied, quoted, liked, and reposted you. "
-        f"This first report is {scope}: Flowers, What's new, and Replies. "
-        "Thank someone below, ask for a report anytime, or pick a daily or weekly one. "
-        "Community sharing can wait until later."
+        f"### {TOUR_NEXT_HEADING}\n\n"
+        f"{TOUR_NEXT_CHOICE}\n\n"
+        f"{TOUR_NEXT_LATER}\n"
     )
 PARALLEL_BATCH = 12
 PER_READ_SECONDS = 10
 READS_PER_MINUTE = 30
 
 
-def estimate_minutes(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH):
+def estimate_minutes(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH,
+                     sequential_seconds=0):
     """Whole minutes for this many X reads.
 
     Time is reads × per-read seconds / parallelism, and never faster than
     the 30-read minute cap. Parallelism stays at most 12. Any real run is
     at least one minute. Zero reads is zero minutes.
+
+    `sequential_seconds` is time that cannot overlap, such as reply-search
+    pages that each wait on the previous page. It is not divided by the batch.
     """
     reads = int(read_count or 0)
-    if reads <= 0:
+    sequential = max(0.0, float(sequential_seconds or 0))
+    if reads <= 0 and sequential <= 0:
         return 0
+    if reads <= 0:
+        return max(1, int(math.ceil(sequential / 60 - 1e-9)))
     width = max(1, min(int(parallelism), PARALLEL_BATCH, reads))
     seconds = reads * float(per_read_seconds) / width
     rate_seconds = reads / READS_PER_MINUTE * 60
-    seconds = max(seconds, rate_seconds)
+    seconds = max(seconds, rate_seconds, sequential)
     return max(1, int(math.ceil(seconds / 60 - 1e-9)))
 
 
-def estimate_message(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH):
-    """What to tell the owner before the first X read of a report."""
-    minutes = estimate_minutes(read_count, per_read_seconds, parallelism)
+def estimate_message(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH,
+                     sequential_seconds=0):
+    """What to tell the owner before the reads of a report."""
+    minutes = estimate_minutes(
+        read_count, per_read_seconds, parallelism, sequential_seconds)
     unit = "minute" if minutes == 1 else "minutes"
     return (
         f"This report is about {minutes} {unit}. "
         "You don't need to wait in the chat. "
         "I'll notify you when it's ready."
     )
+
+
+def reply_metric(post):
+    return int((post.get("public_metrics") or {}).get("reply_count") or 0)
+
+
+def reply_pages_for(total):
+    """How many recent-search pages `total` replies need, at 25 a page."""
+    total = max(0, int(total or 0))
+    if total <= 0:
+        return 0
+    return int(math.ceil(total / SEARCH_PAGE_SIZE))
 
 
 def select_trial_posts(posts, limit=TRIAL_POST_COUNT):
@@ -653,13 +700,15 @@ def load_saved_posts(data_dir):
 
 
 def trial_plan(posts, limit=TRIAL_POST_COUNT, budget=TRIAL_READ_BUDGET):
-    """Reads for a first report, capped by `budget`.
+    """Reads for the welcome tour, capped by `budget`.
 
-    The posts page is one read. Replies to the chosen posts are one search.
-    Likers, reposters, and quote posts are one read each, and only when that
-    count is greater than 0. Likers are never planned for replies, because
-    replies are not in the chosen set. When the list is over the budget,
-    likers stay, then reposters, then quote posts, newest posts first.
+    The posts page is one read. Reply search is one page per 25 replies,
+    from the chosen posts' reply_count totals, because recent search returns
+    25 even when max_results is 100. Those pages are sequential. Likers,
+    reposters, and quote posts are one read each, and only when that count
+    is greater than 0. Likers are never planned for replies, because replies
+    are not in the chosen set. When the list is over the budget, reply pages
+    stay, then likers, then reposters, then quote posts, newest posts first.
     """
     limit = max(0, int(limit))
     budget = max(0, int(budget))
@@ -686,19 +735,48 @@ def trial_plan(posts, limit=TRIAL_POST_COUNT, budget=TRIAL_READ_BUDGET):
         "exclude": ["replies", "retweets"],
     })
     ids = [str(post["id"]) for post in chosen]
-    if ids:
-        add({
+    reply_total = sum(reply_metric(post) for post in chosen)
+    pages_needed = reply_pages_for(reply_total) if ids else 0
+    search_pages = 0
+    if ids and pages_needed:
+        room = max(0, budget - used)
+        search_pages = min(pages_needed, room)
+        paging = (
+            "Recent search returns 25 posts a page even when max_results is 100. "
+            "Save each page as mentions_1, mentions_2, and so on. "
+            "Keep paging while next_token is set, the first-level replies saved "
+            f"so far are fewer than the posts' reply_count total ({reply_total}), "
+            "and the read budget still has room. Stop when that first-level count "
+            "matches those reply metrics or the budget ends. Do not stop after one extra page."
+        )
+        call = {
             "tool": "search_posts_all",
-            "count": 1,
-            "purpose": "replies to the posts in the first report",
+            "count": search_pages,
+            "purpose": "replies to the posts in the welcome tour",
             "query": " OR ".join(f"conversation_id:{pid}" for pid in ids),
             "post_ids": ids,
+            "reply_count": reply_total,
+            "page_size": SEARCH_PAGE_SIZE,
+            "pages_needed": pages_needed,
             "max_results": 100,
+            "paging": paging,
             "fallback": (
-                "If search is missing, one get_users_mentions page and stop. "
-                "Do not keep paging."
+                "If search is missing, page get_users_mentions the same way, "
+                "25 a page, until the first-level replies match reply_count "
+                "or the budget ends. Do not page the whole account past that."
             ),
-        })
+        }
+        if search_pages:
+            used += search_pages
+            reads.append(call)
+        if search_pages < pages_needed:
+            skipped.append({
+                "tool": "search_posts_all",
+                "count": pages_needed - search_pages,
+                "purpose": "reply pages past the read budget",
+                "reply_count": reply_total,
+                "page_size": SEARCH_PAGE_SIZE,
+            })
     optional = []
     for index, post in enumerate(chosen):
         pid = str(post["id"])
@@ -739,7 +817,9 @@ def trial_plan(posts, limit=TRIAL_POST_COUNT, budget=TRIAL_READ_BUDGET):
             "like_count": like_count(post),
             "repost_count": int(metrics.get("repost_count") or 0),
             "quote_count": int(metrics.get("quote_count") or 0),
+            "reply_count": reply_metric(post),
         })
+    sequential = search_pages * SEARCH_PAGE_SECONDS
     return {
         "trial_post_count": limit,
         "budget": budget,
@@ -748,14 +828,23 @@ def trial_plan(posts, limit=TRIAL_POST_COUNT, budget=TRIAL_READ_BUDGET):
         "skipped": skipped,
         "read_count": used,
         "within_budget": not skipped and used <= budget,
-        "estimate_minutes": estimate_minutes(used),
-        "estimate_message": estimate_message(used),
+        "reply_count": reply_total,
+        "reply_page_size": SEARCH_PAGE_SIZE,
+        "reply_pages": search_pages,
+        "reply_pages_needed": pages_needed,
+        "estimate_minutes": estimate_minutes(used, sequential_seconds=sequential),
+        "estimate_message": estimate_message(used, sequential_seconds=sequential),
         "parallel_batch": PARALLEL_BATCH,
         "per_read_seconds": PER_READ_SECONDS,
+        "search_page_seconds": SEARCH_PAGE_SECONDS,
         "note": (
             "Do not fetch followers or following. "
             "Do not fetch likers for replies. "
-            "Send independent reads in parallel batches of up to 12, under 30 a minute."
+            "Recent search returns 25 posts a page even when max_results is 100. "
+            "Page the reply search until the first-level reply count matches the "
+            "posts' reply_count total or the read budget ends. "
+            "Those pages are one after another, about a minute each. "
+            "Send other independent reads in parallel batches of up to 12, under 30 a minute."
         ),
     }
 
@@ -1460,14 +1549,17 @@ SUBTITLES = {
     "both": {
         "day": "Top neighbours of the last 24 hours",
         "week": "Top neighbours of the last 7 days",
+        "first": "Neighbours from your latest posts",
     },
     "likes": {
         "day": "Top likers of the last 24 hours",
         "week": "Top likers of the last 7 days",
+        "first": "Neighbours from your latest posts",
     },
     "replies": {
         "day": "Top repliers of the last 24 hours",
         "week": "Top repliers of the last 7 days",
+        "first": "Neighbours from your latest posts",
     },
 }
 
@@ -1865,7 +1957,7 @@ def period_line(window, since, now, label):
     if window == "week":
         return "Last 7 days"
     if window == "first":
-        return "First report"
+        return TOUR_TITLE
     if window == "custom":
         return label or "Custom period"
     return label or "This report"
@@ -2055,15 +2147,30 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     if legend:
         lines.append(" · ".join(legend))
     lines.append("")
+    tour = window == "first"
     if intro:
-        lines.append(intro)
+        for row in intro.splitlines():
+            if row.strip():
+                lines.append(row)
         lines.append("")
+
+    def open_section(title, explainer):
+        lines.append(f"### {title}")
+        lines.append("")
+        if explainer:
+            lines.append(explainer)
+            lines.append("")
+
     flowers = activity["interactions"]
     if not flowers:
-        lines.append("No replies, likes, or reposts in this stretch.")
+        if tour:
+            open_section("💐 Flowers", TOUR_FLOWERS)
+            lines.append("No replies, likes, or reposts in this stretch.")
+            lines.append("")
+        else:
+            lines.append("No replies, likes, or reposts in this stretch.")
     else:
-        lines.append("### 💐 Flowers")
-        lines.append("")
+        open_section("💐 Flowers", TOUR_FLOWERS if tour else None)
         for row in flowers[:show]:
             lines.extend(flower_lines(row))
         extra = len(flowers) - show
@@ -2073,18 +2180,24 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     catch = activity["catch_up"]
     if not catch:
         if activity.get("all_caught_up"):
-            lines.append("You're all caught up with your good neighbours 🎉")
+            sentence = "You're all caught up with your good neighbours 🎉"
         elif activity.get("catch_hint"):
-            lines.append("No one to catch up with in this stretch.")
-            if window != "first":
-                lines.append("Add people to your good neighbours list to keep up with them here.")
+            sentence = "No one to catch up with in this stretch."
         else:
-            lines.append("No recent original posts from your good neighbours.")
+            sentence = "No recent original posts from your good neighbours."
+        if tour:
+            open_section("🏡 What's new", TOUR_WHATS_NEW)
+            lines.append(sentence)
+            lines.append("")
+        else:
+            lines.append(sentence)
+            if activity.get("catch_hint") and not activity.get("all_caught_up"):
+                lines.append("Add people to your good neighbours list to keep up with them here.")
     else:
-        lines.append("### 🏡 What's new")
-        if activity.get("catch_hint") and window != "first":
+        open_section("🏡 What's new", TOUR_WHATS_NEW if tour else None)
+        if activity.get("catch_hint") and not tour:
             lines.append("Add people to your good neighbours list to keep up with them here.")
-        lines.append("")
+            lines.append("")
         for person in catch[:show]:
             lines.extend(catch_lines(person))
         extra = len(catch) - show
@@ -2093,10 +2206,14 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
             lines.append("")
     unanswered, answered = greeting_rows(activity["threads"])
     if not unanswered and not answered:
-        lines.append("No replies or quote posts in this stretch.")
+        if tour:
+            open_section("👋 Replies", TOUR_REPLIES)
+            lines.append("No replies or quote posts in this stretch.")
+            lines.append("")
+        else:
+            lines.append("No replies or quote posts in this stretch.")
     else:
-        lines.append("### 👋 Replies")
-        lines.append("")
+        open_section("👋 Replies", TOUR_REPLIES if tour else None)
         if not unanswered:
             lines.append("No replies waiting on you.")
             lines.append("")
@@ -2119,17 +2236,22 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     }
 
 
-def write_thanks(path, thanks):
+def write_thanks(path, thanks, preface=None, closing=None):
+    parts = []
+    if preface:
+        parts.append(preface.rstrip() + "\n\n")
     if not thanks:
-        text = "No neighbours to thank in this stretch.\n"
+        parts.append("No neighbours to thank in this stretch.\n")
     else:
-        text = (
+        parts.append(
             f"{thanks['text']}\n\n"
             f"[Post your thank-you]({thanks['intent']})\n\n"
             f"{thanks.get('note') or THANK_YOU_NOTE}\n"
         )
+    if closing:
+        parts.append("\n" + closing.rstrip() + "\n")
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(text)
+        fh.write("".join(parts))
 
 
 def wrap_text(draw, text, face, width):
@@ -2473,13 +2595,15 @@ def main():
     parser.add_argument("--fresh-hours", dest="fresh_hours", type=float,
                         help="owner override for how many hours a report stays fresh")
     parser.add_argument("--first-run", action="store_true",
-                        help="first report: the latest original posts and quotes, no day window")
+                        help="welcome tour: the latest original posts and quotes, no day window")
     parser.add_argument("--trial-plan", action="store_true",
-                        help="print the first-report reads for posts already saved in --data")
+                        help="print the welcome-tour reads for posts already saved in --data")
     parser.add_argument("--estimate-reads", type=int, default=None,
                         help="print the minute estimate for this many X reads")
     parser.add_argument("--trial-post-count", dest="trial_post_count", type=int, default=None,
-                        help="how many original posts and quotes the first report uses (default 5)")
+                        help="how many original posts and quotes the welcome tour uses (default 5)")
+    parser.add_argument("--picture-only", action="store_true",
+                        help="draw the neighbours picture from saved data and skip the report")
     parser.add_argument("--read-budget", dest="read_budget", type=int, default=None,
                         help="cap for --trial-plan (default 15)")
     parser.add_argument("--report-card", action="store_true",
@@ -2549,7 +2673,7 @@ def main():
     cfg["per_day"] = as_bool(cfg.get("per_day"))
     if cfg.get("report") not in REPORTS:
         parser.error("report must be likes, replies, or both")
-    needs_pillow = args.report_card or args.picture is not False
+    needs_pillow = args.report_card or args.picture is not False or args.picture_only
     if needs_pillow and not args.no_image:
         try:
             import PIL  # noqa: F401
@@ -2591,7 +2715,7 @@ def main():
             span_start = min(ts(post["created_at"]) for post in chosen)
         else:
             span_start = now - timedelta(minutes=1)
-        windows = [("first", span_start, "First report")]
+        windows = [("first", span_start, TOUR_TITLE)]
         if args.picture is None:
             args.picture = True
     elif args.days:
@@ -2607,6 +2731,47 @@ def main():
         ]
     zone = owner_zone(cfg.get("timezone"))
     import report_page
+    if args.picture_only:
+        if args.no_image:
+            parser.error("--picture-only draws the picture; do not pass --no-image")
+        span_days = int(args.days or 7)
+        if span_days < 1:
+            parser.error("days must be at least 1")
+        since = now - timedelta(days=span_days)
+        activity = build_activity(
+            data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
+            good_neighbours=neighbours)
+        picture_path = os.path.join(args.out, "x_neighbours_picture.png")
+        if span_days == 7:
+            subtitle = SUBTITLES[mode].get("week", "Top neighbours of the last 7 days")
+        elif span_days == 1:
+            subtitle = SUBTITLES[mode].get("day", "Top neighbours of the last 24 hours")
+        else:
+            subtitle = f"Top neighbours of the last {span_days} days"
+        draw_circle(
+            data, me, activity["ranked"], picture_path,
+            rings=cfg["rings"], show_names=cfg["show_names"],
+            subtitle=subtitle, theme=cfg["theme"])
+        text, intent = thank_you_post(now, zone)
+        print(json.dumps({
+            "picture": picture_path,
+            "picture_asset": "asset:" + os.path.basename(picture_path),
+            "picture_alt": report_page.PICTURE_ALT,
+            "headline": "Your neighbours picture",
+            "days": span_days,
+            "thank_you": {
+                "text": text,
+                "intent": intent,
+                "link_label": "Post your thank-you",
+                "note": THANK_YOU_NOTE,
+            },
+            "messages": [{
+                "part": "picture",
+                "text": "Your neighbours picture",
+                "images": [picture_path],
+            }],
+        }, ensure_ascii=False))
+        return
     for key, span, label in windows:
         since = span if isinstance(span, datetime) else now - timedelta(days=span)
         activity = build_activity(
@@ -2641,7 +2806,10 @@ def main():
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
-        write_thanks(thanks_path, thanks)
+        write_thanks(
+            thanks_path, thanks,
+            preface=TOUR_THANKS if key == "first" else None,
+            closing=tour_next_markdown() if key == "first" else None)
         if key == "week":
             with open(thanks_path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + WEEKLY_FEEDBACK + "\n")
@@ -2657,6 +2825,9 @@ def main():
         if extra.strip():
             page["blocks"] = report_page.insert_before_thanks(
                 page["blocks"], report_page.blocks_from_extra_markdown(extra))
+        if picture_path:
+            page = report_page.apply_overrides(
+                page, picture_asset_name="asset:" + os.path.basename(picture_path))
         canvas_path = os.path.join(args.out, f"report_{key}.canvas.tsx")
         model_path = os.path.join(args.out, f"report_{key}_page.json")
         report_page.write_page(page, canvas_path, model_path)
@@ -2687,7 +2858,7 @@ def main():
                     "text": page["headline"],
                     "page_title": page["title"],
                     "page_canvas": canvas_path,
-                    "images": [picture_path] if picture_path else [],
+                    "images": [],
                 },
             ],
             "fallback_messages": [
@@ -2727,6 +2898,7 @@ def main():
                 override=cfg.get("fresh_hours"))
         if key == "week":
             output[key]["feedback_line"] = WEEKLY_FEEDBACK
+            output[key]["picture_nudge"] = PICTURE_NUDGE
         elif key != "first":
             suggestions = suggest_good_neighbours(
                 activity, neighbours, top=cfg["top"])
@@ -2742,6 +2914,16 @@ def main():
             output[key]["report_png"] = png_path
         if picture_path:
             output[key]["picture"] = picture_path
+            output[key]["picture_asset"] = "asset:" + os.path.basename(picture_path)
+            output[key]["picture_alt"] = report_page.PICTURE_ALT
+        if key != "first" and neighbours:
+            import good_neighbours_page
+            gn_canvas = os.path.join(args.out, "good_neighbours.canvas.tsx")
+            gn_model_path = os.path.join(args.out, "good_neighbours_page.json")
+            gn = good_neighbours_page.build_model(neighbours, activity["catch_up"])
+            good_neighbours_page.write_page(gn, gn_canvas, gn_model_path)
+            output[key]["good_neighbours_page"] = good_neighbours_page.page_output(
+                gn, gn_canvas, gn_model_path)
     print(json.dumps(output, ensure_ascii=False))
 
 

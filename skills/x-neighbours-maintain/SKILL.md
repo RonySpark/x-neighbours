@@ -14,7 +14,7 @@ You change this repo for a contributor. Follow every rule in this file. The owne
 
 1. Start from an issue. When the change has no issue, open one first. One issue is one change.
 2. Update `main`, then branch from it. Commit on that branch.
-3. Leave other open issues on their own branches. Add `CONTRIBUTING.md` or a pull request template only when that is the issue you are closing. Add another GitHub Actions workflow only when that is the issue. [`skills/x-neighbours/SKILL.md`](../x-neighbours/SKILL.md) is the runbook for later reports. The first report is [`skills/x-neighbours/FIRST_RUN.md`](../x-neighbours/FIRST_RUN.md). `BOT.md` only points at those files. Do not paste the runbook back into `BOT.md`.
+3. Leave other open issues on their own branches. Add `CONTRIBUTING.md` or a pull request template only when that is the issue you are closing. Add another GitHub Actions workflow only when that is the issue. [`skills/x-neighbours/SKILL.md`](../x-neighbours/SKILL.md) is the runbook for later reports. The welcome tour is [`skills/x-neighbours/FIRST_RUN.md`](../x-neighbours/FIRST_RUN.md). `BOT.md` only points at those files. Do not paste the runbook back into `BOT.md`.
 
 ## One change
 

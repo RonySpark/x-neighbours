@@ -19,7 +19,7 @@ Read [`skills/x-neighbours/SKILL.md`](../x-neighbours/SKILL.md) for the report i
 
 ## Join and leave
 
-Do not offer community mode during the first report. That report follows [FIRST_RUN.md](../x-neighbours/FIRST_RUN.md) and stops at the five-post demo plus a short intro. After the owner has picked a daily, weekly, or on-request routine, offer community once, with or after their first regular report. If they ask to join before that, wait until that report. Then run:
+Do not offer community mode during the welcome tour. That tour follows [FIRST_RUN.md](../x-neighbours/FIRST_RUN.md) and stops at the five-post demo plus a short intro. After the owner has picked a daily, weekly, or on-request routine, offer community once, with or after their first regular report. If they ask to join before that, wait until that report. Then run:
 
 ```bash
 python3 community.py --file <community path> offer
@@ -62,7 +62,19 @@ If `remind` is false, leave the Page as the report script wrote it. No @handle i
 
 If `remind` is true, rewrite the Page with `report_page.py` so the “Post your thank-you” link is `intent` (the composer includes `@SkyXFunNext`) and `text` follows the note. That reminder is the only @handle, and it stays on the Page. The owner still attaches the picture and posts it. You do not post or repost.
 
-The reminder is skipped when the posting account is already `@SkyXFunNext`. If WriteCanvas fails, the plain-text fallback in the main runbook uses the same `intent` and adds `text` after the note.
+The reminder is skipped when the posting account is already `@SkyXFunNext`. If WriteCanvas fails, the plain-text fallback in the main runbook uses the same `intent` and adds `text` after the note. When you rewrite the Page, keep `--picture-asset` so the house picture stays inside the Page. The main runbook has the WriteCanvasAsset step.
+
+## Community Page
+
+This is the list of recommended accounts. It is not the opt-in card and not the share flow. Those stay in the chat.
+
+Send the Page when the owner asks to see the community list, and after the Monday `save-global` when the file has people. Do not send it on the welcome tour. Do not send it in individual mode. Do not follow anyone on it.
+
+```bash
+python3 community_page.py --global <store>/global_neighbours.neighbours --out <dir>
+```
+
+If `send` is false, say `reason` in one line. Do not invent a Page. If `send` is true, pass the canvas file to WriteCanvas. Do not pass a canvas id. The title is `Community`. The chat message is `headline` and the Page link. Each @handle on the Page links to that profile. The count is how many owners recommended them. A recommendation is not a follow.
 
 ## Sunday reminder
 

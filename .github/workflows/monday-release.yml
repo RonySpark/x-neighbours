@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       release_notes:
-        description: Optional. 3 to 5 short lines for the owner, separated by |
+        description: Optional. 3 to 6 short lines for the owner, separated by |
         required: false
         type: string
         default: ""

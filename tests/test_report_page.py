@@ -85,6 +85,10 @@ def empty_activity(**flags):
     return activity
 
 
+def component_tags(source):
+    return set(re.findall(r"<([A-Z][A-Za-z0-9]*)\b", source))
+
+
 class TemplateTest(unittest.TestCase):
     def test_template_imports_only_the_page_kit(self):
         with open(report_page.TEMPLATE, encoding="utf-8") as fh:
@@ -94,6 +98,20 @@ class TemplateTest(unittest.TestCase):
         self.assertIn('from "grok/canvas"', template)
         self.assertNotIn("fetch(", template)
         self.assertNotIn("cursor/canvas", template)
+
+    def test_kit_blocks_are_not_wrapped_in_custom_tags(self):
+        with open(report_page.TEMPLATE, encoding="utf-8") as fh:
+            template = fh.read()
+        self.assertEqual(
+            component_tags(template),
+            {"Page", "Section", "Text", "TextLink", "Divider", "Image"},
+        )
+        for name in ("LineText", "SectionBody", "Thanks"):
+            self.assertNotIn(f"function {name}", template)
+            self.assertNotIn(f"<{name}", template)
+        self.assertIn("{introLines(report.intro)}", template)
+        self.assertIn("{sectionNodes(block)}", template)
+        self.assertIn("{thanksNodes(block)}", template)
 
 
 class FewPageTest(unittest.TestCase):
@@ -144,7 +162,10 @@ class FewPageTest(unittest.TestCase):
         self.assertEqual(self.output["page_title"], "Last 24 hours")
         self.assertEqual(self.output["messages"][0]["part"], "page")
         self.assertEqual(self.output["messages"][0]["text"], self.output["headline"])
+        self.assertEqual(self.output["messages"][0]["images"], [])
         self.assertEqual(len(self.output["fallback_messages"]), 2)
+        self.assertIn("good_neighbours_page", self.output)
+        self.assertEqual(self.output["good_neighbours_page"]["page_title"], "Good neighbours")
 
     def test_every_markdown_link_is_on_the_page(self):
         md_urls = set(MD_LINK.findall(self.report)) | set(MD_LINK.findall(self.thanks))
@@ -252,18 +273,31 @@ class EmptySectionTest(unittest.TestCase):
         self.assertNotIn("🏡 What's new", source)
         self.assertNotIn(report_page.NO_ORIGINALS, source)
 
-    def test_trial_keeps_the_intro_and_skips_the_list_hint(self):
+    def test_tour_intro_explainers_and_whats_next(self):
         activity = empty_activity()
         intro = xn.trial_intro(5)
         model = report_page.build_page_model(
-            activity, SINCE, NOW, "First report", window="first", intro=intro, thanks=THANKS)
-        payload = parse_canvas(report_page.render_report_canvas(model))
-        self.assertEqual(payload["title"], "First report")
+            activity, SINCE, NOW, "Welcome tour", window="first", intro=intro, thanks=THANKS)
+        source = report_page.render_report_canvas(model)
+        payload = parse_canvas(source)
+        self.assertEqual(payload["title"], "Welcome tour")
         self.assertEqual(payload["intro"], intro)
-        self.assertIn("Community sharing can wait until later.", payload["intro"])
-        texts = [block.get("text") for block in payload["blocks"]]
-        self.assertIn(report_page.NO_CATCH, texts)
-        self.assertNotIn(report_page.CATCH_HINT, texts)
+        self.assertTrue(payload["intro"].startswith("Here's how X Neighbours works."))
+        intro_lines = [line for line in payload["intro"].splitlines() if line.strip()]
+        self.assertGreaterEqual(len(intro_lines), 2)
+        self.assertLessEqual(len(intro_lines), 3)
+        blob = json.dumps(payload)
+        for line in (xn.TOUR_FLOWERS, xn.TOUR_WHATS_NEW, xn.TOUR_REPLIES, xn.TOUR_THANKS):
+            self.assertIn(line, blob)
+        headings = [block.get("heading") for block in payload["blocks"] if block["kind"] == "section"]
+        self.assertEqual(headings[0], "💐 Flowers")
+        self.assertEqual(headings[-1], "What's next")
+        self.assertIn("daily, weekly, or only when you ask", blob)
+        self.assertIn(xn.TOUR_NEXT_LATER, blob)
+        self.assertNotIn(report_page.CATCH_HINT, blob)
+        self.assertIn(report_page.NO_CATCH, blob)
+        self.assertNotIn("Add to good neighbours", blob)
+        self.assertNotIn("Join the community", blob)
 
     def test_renderer_drops_a_section_that_has_no_rows(self):
         model = {
@@ -369,8 +403,22 @@ class OverrideTest(unittest.TestCase):
         self.assertEqual(thanks["href"], "https://x.com/intent/post?text=tagged")
         self.assertIn("@SkyXFunNext", thanks["extra"])
         self.assertIsNone(thanks["picture"])
-        shown = report_page.apply_overrides(model, picture_asset_name="asset:neighbours")
-        self.assertEqual(report_page.page_payload(shown)["blocks"][-1]["picture"], "asset:neighbours")
+        shown = report_page.apply_overrides(
+            model, picture_asset_name="asset:neighbours.png", picture_ratio="1200/800")
+        thanks = report_page.page_payload(shown)["blocks"][-1]
+        self.assertEqual(thanks["picture"], "asset:neighbours.png")
+        self.assertEqual(thanks["pictureAlt"], report_page.PICTURE_ALT)
+        self.assertEqual(thanks["pictureRatio"], "1200/800")
+        source = report_page.render_report_canvas(shown)
+        self.assertIn("asset:neighbours.png", source)
+        self.assertIn("1200/800", source)
+        code = code_without_data(source)
+        self.assertIn("<Image", code)
+        self.assertIn("ratio={", code)
+        self.assertLessEqual(
+            component_tags(code),
+            {"Page", "Section", "Text", "TextLink", "Divider", "Image"},
+        )
 
     def test_cli_writes_the_canvas_from_the_model(self):
         folder = tempfile.mkdtemp(prefix="xn-page-cli-")
@@ -439,6 +487,15 @@ class RunbookTest(unittest.TestCase):
         self.assertIn("Do not send a good-neighbours card", first)
         self.assertIn("community", first.lower())
         self.assertIn("don't need to wait", first)
+        self.assertIn("Welcome tour", first)
+        self.assertIn("WriteCanvasAsset", first)
+        self.assertIn("WriteCanvasAsset", skill)
+        self.assertIn("--picture-ratio", skill)
+        self.assertIn("Good neighbours", skill)
+        self.assertIn("--picture-only", skill)
+        self.assertIn("picture_nudge", skill)
+        self.assertNotIn("First report", first)
+        self.assertNotIn("First report", skill)
 
 
 if __name__ == "__main__":

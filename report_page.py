@@ -29,6 +29,7 @@ NO_ORIGINALS = "No recent original posts from your good neighbours."
 NO_REPLIES = "No replies or quote posts in this stretch."
 NONE_WAITING = "No replies waiting on you."
 NO_THANKS = "No neighbours to thank in this stretch."
+PICTURE_ALT = "House-framed neighbours picture."
 
 _URL = re.compile(r"https://\S+")
 
@@ -108,14 +109,15 @@ def greeting_item(row):
     return {"lines": lines}
 
 
-def section_block(heading, items, preface=None, footers=None):
+def section_block(heading, items, preface=None, footers=None, explainer=None):
     kept = [footer for footer in (footers or []) if footer]
-    if not items and not preface and not kept:
+    if not items and not preface and not kept and not explainer:
         return None
     return {
         "kind": "section",
         "heading": heading,
         "preface": preface or None,
+        "explainer": explainer or None,
         "items": items,
         "footers": kept,
     }
@@ -127,7 +129,8 @@ def note_block(text):
     return {"kind": "note", "text": text}
 
 
-def thanks_block(thanks, picture=None):
+def thanks_block(thanks, picture=None, explainer=None):
+    shown = clean_picture(picture)
     if not thanks:
         return {
             "kind": "thanks",
@@ -136,7 +139,10 @@ def thanks_block(thanks, picture=None):
             "href": None,
             "note": None,
             "extra": None,
+            "explainer": explainer or None,
             "picture": None,
+            "pictureAlt": None,
+            "pictureRatio": None,
         }
     return {
         "kind": "thanks",
@@ -145,7 +151,10 @@ def thanks_block(thanks, picture=None):
         "href": thanks.get("intent") or None,
         "note": thanks.get("note") or xn.THANK_YOU_NOTE,
         "extra": None,
-        "picture": clean_picture(picture),
+        "explainer": explainer or None,
+        "picture": shown,
+        "pictureAlt": PICTURE_ALT if shown else None,
+        "pictureRatio": None,
     }
 
 
@@ -171,42 +180,61 @@ def build_page_model(activity, since, now, label, show=None, window="day", intro
         legend_bits.append("⭐ = good neighbour")
     legend = " · ".join(legend_bits) if legend_bits else None
 
+    tour = window == "first"
     blocks = []
     flowers = activity["interactions"]
+    flowers_explainer = xn.TOUR_FLOWERS if tour else None
     if not flowers:
-        blocks.append(note_block(NO_FLOWERS))
+        if tour:
+            blocks.append(section_block(
+                "💐 Flowers", [], preface=NO_FLOWERS, explainer=flowers_explainer))
+        else:
+            blocks.append(note_block(NO_FLOWERS))
     else:
         items = [flower_item(row) for row in flowers[:show]]
         footers = []
         extra = len(flowers) - show
         if extra > 0:
             footers.append(f"+{extra} more in Flowers. Ask to see them.")
-        blocks.append(section_block("💐 Flowers", items, footers=footers))
+        blocks.append(section_block(
+            "💐 Flowers", items, footers=footers, explainer=flowers_explainer))
 
     catch = activity["catch_up"]
+    catch_explainer = xn.TOUR_WHATS_NEW if tour else None
     if not catch:
         if activity.get("all_caught_up"):
-            blocks.append(note_block(CAUGHT_UP))
+            sentence = CAUGHT_UP
         elif activity.get("catch_hint"):
-            blocks.append(note_block(NO_CATCH))
-            if window != "first":
-                blocks.append(note_block(CATCH_HINT))
+            sentence = NO_CATCH
         else:
-            blocks.append(note_block(NO_ORIGINALS))
+            sentence = NO_ORIGINALS
+        if tour:
+            blocks.append(section_block(
+                "🏡 What's new", [], preface=sentence, explainer=catch_explainer))
+        else:
+            blocks.append(note_block(sentence))
+            if activity.get("catch_hint") and not activity.get("all_caught_up"):
+                blocks.append(note_block(CATCH_HINT))
     else:
         preface = None
-        if activity.get("catch_hint") and window != "first":
+        if activity.get("catch_hint") and not tour:
             preface = CATCH_HINT
         items = [catch_item(person) for person in catch[:show]]
         footers = []
         extra = len(catch) - show
         if extra > 0:
             footers.append(f"+{extra} more in What's new. Ask to see them.")
-        blocks.append(section_block("🏡 What's new", items, preface=preface, footers=footers))
+        blocks.append(section_block(
+            "🏡 What's new", items, preface=preface, footers=footers, explainer=catch_explainer))
 
     unanswered, answered = xn.greeting_rows(activity["threads"])
+    replies_explainer = xn.TOUR_REPLIES if tour else None
     if not unanswered and not answered:
-        blocks.append(note_block(NO_REPLIES))
+        if tour:
+            blocks.append(section_block(
+                "👋 Replies", [], preface=NO_REPLIES, explainer=replies_explainer))
+        else:
+            blocks.append(note_block(NO_REPLIES))
     else:
         preface = NONE_WAITING if not unanswered else None
         items = [greeting_item(row) for row in unanswered[:show]]
@@ -216,9 +244,18 @@ def build_page_model(activity, since, now, label, show=None, window="day", intro
             footers.append(f"+{extra} more replies. Ask to see them.")
         if answered:
             footers.append(f"{len(answered)} already answered. Ask to see them.")
-        blocks.append(section_block("👋 Replies", items, preface=preface, footers=footers))
+        blocks.append(section_block(
+            "👋 Replies", items, preface=preface, footers=footers, explainer=replies_explainer))
 
-    blocks.append(thanks_block(thanks))
+    blocks.append(thanks_block(thanks, explainer=xn.TOUR_THANKS if tour else None))
+    if tour:
+        blocks.append(section_block(
+            xn.TOUR_NEXT_HEADING,
+            [
+                {"lines": [{"parts": [part(xn.TOUR_NEXT_CHOICE)]}]},
+                {"lines": [{"parts": [part(xn.TOUR_NEXT_LATER)]}]},
+            ],
+        ))
     blocks = [block for block in blocks if block]
     return {
         "title": title,
@@ -305,9 +342,42 @@ def clean_picture(value):
     return None
 
 
-def apply_overrides(model, thank_intent=None, thanks_extra=None, picture_asset_name=None):
+def _positive_number(text):
+    try:
+        return float(text) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def clean_ratio(value):
+    """Picture proportions from an upload: `width/height` or a positive number."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        if value <= 0:
+            return None
+        if float(value).is_integer():
+            return int(value)
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    if "/" in text:
+        left, right = [part.strip() for part in text.split("/", 1)]
+        if _positive_number(left) and _positive_number(right):
+            return f"{left}/{right}"
+        return None
+    if _positive_number(text):
+        number = float(text)
+        if number.is_integer():
+            return int(number)
+        return number
+    return None
+
+
+def apply_overrides(model, thank_intent=None, thanks_extra=None, picture_asset_name=None,
+                    picture_ratio=None, picture_alt=None):
     model = copy.deepcopy(model)
-    picture = clean_picture(picture_asset_name) if picture_asset_name else None
     for block in model.get("blocks") or []:
         if block.get("kind") != "thanks":
             continue
@@ -317,8 +387,18 @@ def apply_overrides(model, thank_intent=None, thanks_extra=None, picture_asset_n
                 block["linkLabel"] = "Post your thank-you"
         if thanks_extra:
             block["extra"] = thanks_extra
-        if picture_asset_name:
+        if picture_asset_name is not None:
+            picture = clean_picture(picture_asset_name)
             block["picture"] = picture
+            if picture:
+                block["pictureAlt"] = picture_alt or block.get("pictureAlt") or PICTURE_ALT
+            else:
+                block["pictureAlt"] = None
+                block["pictureRatio"] = None
+        elif picture_alt:
+            block["pictureAlt"] = picture_alt
+        if picture_ratio is not None and block.get("picture"):
+            block["pictureRatio"] = clean_ratio(picture_ratio)
     return model
 
 
@@ -334,12 +414,14 @@ def page_payload(model):
             items = block.get("items") or []
             preface = block.get("preface") or None
             footers = [footer for footer in (block.get("footers") or []) if footer]
-            if not items and not preface and not footers:
+            explainer = block.get("explainer") or None
+            if not items and not preface and not footers and not explainer:
                 continue
             blocks.append({
                 "kind": "section",
                 "heading": block.get("heading") or "",
                 "preface": preface,
+                "explainer": explainer,
                 "items": items,
                 "footers": footers,
             })
@@ -348,7 +430,8 @@ def page_payload(model):
             text = block.get("text") or ""
             href = block.get("href") or None
             extra = block.get("extra") or None
-            if not text and not href and not extra and not picture:
+            explainer = block.get("explainer") or None
+            if not text and not href and not extra and not picture and not explainer:
                 continue
             blocks.append({
                 "kind": "thanks",
@@ -357,7 +440,10 @@ def page_payload(model):
                 "href": href,
                 "note": block.get("note") or None,
                 "extra": extra,
+                "explainer": explainer,
                 "picture": picture,
+                "pictureAlt": (block.get("pictureAlt") or PICTURE_ALT) if picture else None,
+                "pictureRatio": clean_ratio(block.get("pictureRatio")) if picture else None,
             })
     return {
         "title": model.get("title") or "",
@@ -447,6 +533,11 @@ def main(argv=None):
     parser.add_argument("--thank-intent", help="replace the thank-you link, for a picture-tag")
     parser.add_argument("--thanks-extra", help="line after the thank-you note, such as the picture-tag reminder")
     parser.add_argument("--picture-asset", help="asset: name of an uploaded picture; a web URL is ignored")
+    parser.add_argument("--picture-alt", help="alt text for the picture; default describes the house frame")
+    parser.add_argument(
+        "--picture-ratio",
+        help="width/height from the picture upload, such as 1200/800",
+    )
     args = parser.parse_args(argv)
     with open(args.model, encoding="utf-8") as fh:
         model = json.load(fh)
@@ -455,6 +546,8 @@ def main(argv=None):
         thank_intent=args.thank_intent,
         thanks_extra=args.thanks_extra,
         picture_asset_name=args.picture_asset,
+        picture_ratio=args.picture_ratio,
+        picture_alt=args.picture_alt,
     )
     out = args.out or default_canvas_path(args.model)
     write_page(model, out, args.model)

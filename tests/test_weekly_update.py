@@ -165,10 +165,11 @@ class ReleaseNotesTest(unittest.TestCase):
     def test_current_release_notes_cover_the_owner_facing_changes(self):
         notes = release_notes()
         self.assertGreaterEqual(len(notes), 3)
-        self.assertLessEqual(len(notes), 5)
+        self.assertLessEqual(len(notes), 6)
         blob = " ".join(notes).lower()
+        self.assertIn("welcome tour", blob)
         self.assertIn("5 latest", blob)
-        self.assertIn("minute", blob)
+        self.assertIn("page", blob)
         self.assertIn("notifies you", blob)
         self.assertIn("direct reply", blob)
         self.assertIn("likes on your own replies", blob)

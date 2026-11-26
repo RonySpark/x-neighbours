@@ -46,8 +46,8 @@ def split_notes(text):
 def validate_notes(notes):
     if notes is None:
         return None
-    if not isinstance(notes, list) or not 3 <= len(notes) <= 5:
-        raise ValueError("release_notes needs 3 to 5 short lines")
+    if not isinstance(notes, list) or not 3 <= len(notes) <= 6:
+        raise ValueError("release_notes needs 3 to 6 short lines")
     clean = []
     for item in notes:
         text = str(item).strip()
@@ -116,7 +116,7 @@ def main():
     parser.add_argument("--changelog", required=True)
     parser.add_argument("--source-commit", default="")
     parser.add_argument("--min-compatible", default="")
-    parser.add_argument("--notes", default="", help="3 to 5 short lines, separated by |")
+    parser.add_argument("--notes", default="", help="3 to 6 short lines, separated by |")
     args = parser.parse_args()
     try:
         document = write_release(

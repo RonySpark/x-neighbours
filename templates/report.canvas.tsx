@@ -2,6 +2,9 @@
  * X Neighbours report page.
  * report_page.py replaces the placeholder below with the report object.
  * The only import is "grok/canvas". Data is inline. This file does not fetch.
+ *
+ * Kit blocks (Page, Section, Text, Divider, Image) sit directly inside
+ * Page or Section. Helpers are functions called as {fn(data)}, not components.
  */
 import { Divider, Image, Page, Section, Text, TextLink } from "grok/canvas";
 
@@ -13,6 +16,7 @@ type SectionBlock = {
   kind: "section";
   heading: string;
   preface: string | null;
+  explainer: string | null;
   items: Item[];
   footers: string[];
 };
@@ -23,7 +27,10 @@ type ThanksBlock = {
   href: string | null;
   note: string | null;
   extra: string | null;
+  explainer: string | null;
   picture: string | null;
+  pictureAlt: string | null;
+  pictureRatio: number | string | null;
 };
 type Block = NoteBlock | SectionBlock | ThanksBlock;
 type Report = {
@@ -36,9 +43,17 @@ type Report = {
 
 const report: Report = /*__REPORT_JSON__*/ null as unknown as Report;
 
-function LineText({ line }: { line: Line }) {
+function introLines(intro: string | null) {
+  if (!intro) return null;
+  return intro
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line, index) => <Text key={`intro-${index}`}>{line}</Text>);
+}
+
+function lineText(line: Line, key: string) {
   return (
-    <Text>
+    <Text key={key}>
       {line.parts.map((part, index) =>
         part.href ? (
           <TextLink key={index} href={part.href}>
@@ -52,61 +67,84 @@ function LineText({ line }: { line: Line }) {
   );
 }
 
-function SectionBody({ block }: { block: SectionBlock }) {
-  const lines: { key: string; line: Line }[] = [];
+function sectionNodes(block: SectionBlock) {
+  const nodes = [];
+  if (block.explainer) {
+    nodes.push(<Text key="explainer">{block.explainer}</Text>);
+  }
+  if (block.preface) {
+    nodes.push(<Text key="preface">{block.preface}</Text>);
+  }
   block.items.forEach((item, itemIndex) => {
     item.lines.forEach((line, lineIndex) => {
-      lines.push({ key: `${itemIndex}-${lineIndex}`, line });
+      nodes.push(lineText(line, `${itemIndex}-${lineIndex}`));
     });
   });
-  return (
-    <Section heading={block.heading}>
-      {block.preface ? <Text>{block.preface}</Text> : null}
-      {lines.map((entry) => (
-        <LineText key={entry.key} line={entry.line} />
-      ))}
-      {block.footers.map((footer, index) => (
-        <Text key={`footer-${index}`}>{footer}</Text>
-      ))}
-    </Section>
-  );
+  block.footers.forEach((footer, index) => {
+    nodes.push(<Text key={`footer-${index}`}>{footer}</Text>);
+  });
+  return nodes;
 }
 
-function Thanks({ block }: { block: ThanksBlock }) {
-  return (
-    <Section>
-      <Divider />
-      <Text>{block.text}</Text>
-      {block.href && block.linkLabel ? (
-        <Text>
-          <TextLink href={block.href}>{block.linkLabel}</TextLink>
-        </Text>
-      ) : null}
-      {block.note ? <Text>{block.note}</Text> : null}
-      {block.extra ? <Text>{block.extra}</Text> : null}
-      {block.picture ? (
-        <Image src={block.picture} alt="House-framed neighbours picture." />
-      ) : null}
-    </Section>
-  );
+function thanksNodes(block: ThanksBlock) {
+  const nodes = [];
+  nodes.push(<Divider key="rule" />);
+  if (block.explainer) {
+    nodes.push(<Text key="explainer">{block.explainer}</Text>);
+  }
+  if (block.text) {
+    nodes.push(<Text key="text">{block.text}</Text>);
+  }
+  if (block.href && block.linkLabel) {
+    nodes.push(
+      <Text key="link">
+        <TextLink href={block.href}>{block.linkLabel}</TextLink>
+      </Text>,
+    );
+  }
+  if (block.note) {
+    nodes.push(<Text key="note">{block.note}</Text>);
+  }
+  if (block.extra) {
+    nodes.push(<Text key="extra">{block.extra}</Text>);
+  }
+  if (block.picture) {
+    const alt = block.pictureAlt || "House-framed neighbours picture.";
+    if (block.pictureRatio) {
+      nodes.push(
+        <Image key="picture" src={block.picture} alt={alt} ratio={block.pictureRatio} />,
+      );
+    } else {
+      nodes.push(<Image key="picture" src={block.picture} alt={alt} />);
+    }
+  }
+  return nodes;
 }
 
 export default function XNeighboursReport() {
   return (
     <Page title={report.title} summary={report.summary}>
+      {introLines(report.intro)}
       {report.legend ? <Text>{report.legend}</Text> : null}
-      {report.intro ? <Text>{report.intro}</Text> : null}
       {report.blocks.map((block, index) => {
         if (block.kind === "note") {
           return <Text key={index}>{block.text}</Text>;
         }
         if (block.kind === "thanks") {
-          return <Thanks key={index} block={block} />;
+          return (
+            <Section key={index}>
+              {thanksNodes(block)}
+            </Section>
+          );
         }
-        if (!block.items.length && !block.preface && block.footers.length === 0) {
+        if (!block.items.length && !block.preface && !block.explainer && block.footers.length === 0) {
           return null;
         }
-        return <SectionBody key={index} block={block} />;
+        return (
+          <Section key={index} heading={block.heading}>
+            {sectionNodes(block)}
+          </Section>
+        );
       })}
     </Page>
   );

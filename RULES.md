@@ -23,6 +23,8 @@ score = likes + reposts + 3 × (replies + quotes)
 min_score = max(8, ceil(50 × period_days / 90))
 ```
 
+`replies` in that formula are first-level only. A reply counts when its direct parent (`referenced_tweets` or `referenced_posts`, type `replied_to`) is the owner's original post or quote, the post that starts the conversation. Owner posts P, someone replies (A1), the owner replies, and that person replies again (A2): only A1 counts. A2 does not count as a reply and does not count toward `replies + quotes` of at least 2. `conversation_id` and `in_reply_to_user_id` do not by themselves make a reply first-level. `likes` are likes on those original posts and quotes. The bot does not fetch likers for the owner's replies, and a missing liker file for a reply does not change the score.
+
 | Period | min_score |
 |---|---|
 | 90 days | 50 |

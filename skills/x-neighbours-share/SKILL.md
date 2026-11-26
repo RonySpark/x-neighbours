@@ -26,7 +26,7 @@ If `allowed` is false, tell them `next_allowed_at` and stop.
 
 ## Build the list
 
-Use the saved JSON in `data/`, the same counts as the picture. Default period is 90 days. If they ask for a shorter window, `--days` may be from 7 to 93. Do not invent accounts. Do not use only the 20-person catch-up list.
+Use the saved JSON in `data/`, the same counts as the picture. A reply counts only when it replies directly to an owner post or quote. A later reply in that thread does not. Likes are likes on those posts and quotes, not on the owner's replies. Default period is 90 days. If they ask for a shorter window, `--days` may be from 7 to 93. Do not invent accounts. Do not use only the 20-person catch-up list.
 
 ```bash
 python3 share_submission.py from-data \

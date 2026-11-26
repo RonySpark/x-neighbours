@@ -198,7 +198,12 @@ class Data:
                     bucket.append(uid)
                     have.add(uid)
         for pid, ids in self.likes.items():
-            want = like_count(self.posts.get(pid, {}))
+            post = self.posts.get(pid)
+            # Reply liker files are not required. A file for an owner reply
+            # is ignored, and a missing one is not a short page.
+            if post is not None and not is_owner_original_post(post):
+                continue
+            want = like_count(post or {})
             if want > len(ids):
                 self.likes_truncated.append((pid, len(ids), want))
         self._load_user_lists("reposts_*.json", self.reposts, "reposts_<post id>")
@@ -207,6 +212,9 @@ class Data:
         self._load_engagement()
         self.followers = self._idset("followers_*.json")
         self.following = self._idset("following_*.json")
+        # No following file means the trial (or a partial fetch) did not load
+        # the list. An empty file still counts as loaded.
+        self.following_known = bool(glob.glob(os.path.join(self.data_dir, "following_*.json")))
 
     def _prepare_user(self, user):
         user = dict(user)
@@ -431,6 +439,8 @@ class Data:
         for pid, post in self.posts.items():
             if not self._in_window(post.get("created_at"), since, until):
                 continue
+            if not is_owner_original_post(post):
+                continue
             for uid in self.likes.get(pid, []):
                 if uid != self.me:
                     likes[uid] += 1
@@ -439,8 +449,7 @@ class Data:
                 continue
             if not self._in_window(mention.get("created_at"), since, until):
                 continue
-            parent = next(iter(referenced_ids(mention, "replied_to")), None)
-            if parent and parent in self.owner_original_ids:
+            if is_first_level_reply(mention, self.owner_original_ids):
                 replies[mention["author_id"]] += 1
         excluded = getattr(self, "exclude", set())
         for counts in (likes, replies):
@@ -487,17 +496,268 @@ def is_original_post(post):
 
 
 def is_owner_original_post(post):
-    """Owner post that is not itself a reply.
+    """Owner post or quote that starts a conversation. Not an owner reply.
 
-    conversation_id, when present, is the thread root. A reply keeps that root
+    conversation_id is the thread root. On an original post it matches the
+    post id (or it is missing). On a reply it stays the root, so it differs,
     even when the saved object has no referenced_tweets of its own.
+
+    A quote starts a conversation too: referenced_tweets or referenced_posts
+    has type quoted, and the quote is not itself a reply. Some payloads set
+    that quote's conversation_id to the quoted post. It is still a starter,
+    and likers are fetched for it. A quote that is also a reply is not.
     """
     if not is_original_post(post):
         return False
+    for ref in referenced(post):
+        kind = (ref.get("type") or "").replace("-", "_").lower()
+        if kind in ("quoted", "quote"):
+            return True
     root = post.get("conversation_id")
     if root and str(root) != str(post.get("id")):
         return False
     return True
+
+
+def direct_reply_parent(post):
+    """Id of the direct replied_to parent, or None.
+
+    The id comes from referenced_tweets, or from referenced_posts when that
+    is the only list. conversation_id is the thread root, shared by every
+    reply in the thread, so it is not this parent. in_reply_to_user_id is
+    the parent's author. A nested reply under the owner's own reply still
+    has that field set to the owner.
+    """
+    found = referenced_ids(post, "replied_to")
+    return found[0] if found else None
+
+
+def is_first_level_reply(post, starter_ids):
+    """True when this post replies directly to an owner post or quote.
+
+    starter_ids are the owner's conversation starters (original posts and
+    quotes), not the owner's replies. Owner posts P, A replies to P (A1),
+    the owner replies to A1, and A replies again (A2): only A1 is first-level.
+    A2's replied_to parent is the owner's reply, so A2 does not count.
+    """
+    parent = direct_reply_parent(post)
+    return bool(parent) and parent in starter_ids
+
+
+def should_fetch_likers(post, now):
+    """Whether to call get_posts_liking_users for this owner post.
+
+    Replies are never fetched, even when like_count is greater than 0.
+    Original posts and quotes keep the existing budget:
+    last 24 hours and like_count greater than 0, or days 2–7 and
+    like_count at least 3. Older posts are skipped. A missing created_at
+    cannot be placed in a window, so it is skipped too.
+    """
+    if not isinstance(post, dict) or not is_owner_original_post(post):
+        return False
+    likes = like_count(post)
+    created = post.get("created_at")
+    if not created:
+        return False
+    age = ts(now) - ts(created)
+    if age.total_seconds() < 0:
+        return False
+    if age <= timedelta(hours=24):
+        return likes > 0
+    if age <= timedelta(days=7):
+        return likes >= 3
+    return False
+
+
+TRIAL_POST_COUNT = 5
+TRIAL_READ_BUDGET = 15
+
+
+def trial_intro(count):
+    """Short welcome on the trial report only. No picker, no community ask."""
+    count = int(count or 0)
+    if count == 1:
+        scope = "your latest post"
+    elif count:
+        scope = f"your {count} latest posts"
+    else:
+        scope = "your latest posts"
+    return (
+        "X Neighbours shows who replied, quoted, liked, and reposted you. "
+        f"This trial is {scope}: Flowers, What's new, and Replies. "
+        "Thank someone below, ask for a report anytime, or pick a daily or weekly one. "
+        "Community sharing can wait until later."
+    )
+PARALLEL_BATCH = 12
+PER_READ_SECONDS = 10
+READS_PER_MINUTE = 30
+
+
+def estimate_minutes(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH):
+    """Whole minutes for this many X reads.
+
+    Time is reads × per-read seconds / parallelism, and never faster than
+    the 30-read minute cap. Parallelism stays at most 12. Any real run is
+    at least one minute. Zero reads is zero minutes.
+    """
+    reads = int(read_count or 0)
+    if reads <= 0:
+        return 0
+    width = max(1, min(int(parallelism), PARALLEL_BATCH, reads))
+    seconds = reads * float(per_read_seconds) / width
+    rate_seconds = reads / READS_PER_MINUTE * 60
+    seconds = max(seconds, rate_seconds)
+    return max(1, int(math.ceil(seconds / 60 - 1e-9)))
+
+
+def estimate_message(read_count, per_read_seconds=PER_READ_SECONDS, parallelism=PARALLEL_BATCH):
+    """What to tell the owner before the first X read of a report."""
+    minutes = estimate_minutes(read_count, per_read_seconds, parallelism)
+    unit = "minute" if minutes == 1 else "minutes"
+    return (
+        f"This report is about {minutes} {unit}. "
+        "You don't need to wait in the chat. "
+        "I'll notify you when it's ready."
+    )
+
+
+def select_trial_posts(posts, limit=TRIAL_POST_COUNT):
+    """Newest original posts and quotes, at most `limit`. Replies are left out.
+
+    There is no time window. A quote counts even when conversation_id is the
+    quoted post. A reply does not, including a quote that is also a reply.
+    """
+    limit = max(0, int(limit))
+    by_id = {}
+    for post in posts or []:
+        if not isinstance(post, dict) or post.get("id") is None or not post.get("created_at"):
+            continue
+        row = set_referenced(dict(post))
+        row["id"] = str(row["id"])
+        if not is_owner_original_post(row):
+            continue
+        current = by_id.get(row["id"])
+        if current is None or ts(row["created_at"]) > ts(current["created_at"]):
+            by_id[row["id"]] = row
+    ordered = sorted(by_id.values(), key=lambda post: ts(post["created_at"]), reverse=True)
+    return ordered[:limit]
+
+
+def load_saved_posts(data_dir):
+    rows = []
+    for _path, doc in load(os.path.join(data_dir, "posts_*.json")):
+        for post in doc.get("data") or []:
+            if isinstance(post, dict):
+                rows.append(post)
+    return rows
+
+
+def trial_plan(posts, limit=TRIAL_POST_COUNT, budget=TRIAL_READ_BUDGET):
+    """Reads for a trial report, capped by `budget`.
+
+    The posts page is one read. Replies to the chosen posts are one search.
+    Likers, reposters, and quote posts are one read each, and only when that
+    count is greater than 0. Likers are never planned for replies, because
+    replies are not in the chosen set. When the list is over the budget,
+    likers stay, then reposters, then quote posts, newest posts first.
+    """
+    limit = max(0, int(limit))
+    budget = max(0, int(budget))
+    chosen = select_trial_posts(posts, limit)
+    reads = []
+    skipped = []
+    used = 0
+
+    def add(call):
+        nonlocal used
+        count = int(call.get("count") or 1)
+        if used + count > budget:
+            skipped.append(call)
+            return False
+        used += count
+        reads.append(call)
+        return True
+
+    add({
+        "tool": "get_users_posts",
+        "count": 1,
+        "purpose": "latest original posts and quotes, one page",
+        "max_results": 100,
+        "exclude": ["replies", "retweets"],
+    })
+    ids = [str(post["id"]) for post in chosen]
+    if ids:
+        add({
+            "tool": "search_posts_all",
+            "count": 1,
+            "purpose": "replies to the trial posts",
+            "query": " OR ".join(f"conversation_id:{pid}" for pid in ids),
+            "post_ids": ids,
+            "max_results": 100,
+            "fallback": (
+                "If search is missing, one get_users_mentions page and stop. "
+                "Do not keep paging."
+            ),
+        })
+    optional = []
+    for index, post in enumerate(chosen):
+        pid = str(post["id"])
+        metrics = post.get("public_metrics") or {}
+        if like_count(post) > 0:
+            optional.append((0, index, {
+                "tool": "get_posts_liking_users",
+                "id": pid,
+                "count": 1,
+                "purpose": "likers",
+                "max_results": 100,
+            }))
+        if int(metrics.get("repost_count") or 0) > 0:
+            optional.append((1, index, {
+                "tool": "get_posts_reposted_by",
+                "id": pid,
+                "count": 1,
+                "purpose": "reposters",
+                "max_results": 100,
+            }))
+        if int(metrics.get("quote_count") or 0) > 0:
+            optional.append((2, index, {
+                "tool": "get_posts_quoted_posts",
+                "id": pid,
+                "count": 1,
+                "purpose": "quote posts",
+                "max_results": 100,
+            }))
+    optional.sort()
+    for _priority, _index, call in optional:
+        add(call)
+    summary = []
+    for post in chosen:
+        metrics = post.get("public_metrics") or {}
+        summary.append({
+            "id": str(post["id"]),
+            "created_at": iso_utc(post.get("created_at")),
+            "like_count": like_count(post),
+            "repost_count": int(metrics.get("repost_count") or 0),
+            "quote_count": int(metrics.get("quote_count") or 0),
+        })
+    return {
+        "trial_post_count": limit,
+        "budget": budget,
+        "posts": summary,
+        "reads": reads,
+        "skipped": skipped,
+        "read_count": used,
+        "within_budget": not skipped and used <= budget,
+        "estimate_minutes": estimate_minutes(used),
+        "estimate_message": estimate_message(used),
+        "parallel_batch": PARALLEL_BATCH,
+        "per_read_seconds": PER_READ_SECONDS,
+        "note": (
+            "Do not fetch followers or following. "
+            "Do not fetch likers for replies. "
+            "Send independent reads in parallel batches of up to 12, under 30 a minute."
+        ),
+    }
 
 
 def referenced_ids(post, kind):
@@ -1178,6 +1438,7 @@ DEFAULTS = {
     "rings": 3,
     "show_names": True,
     "first_run_days": 2,
+    "trial_post_count": TRIAL_POST_COUNT,
     "items_per_user": 3,
     "theme": "midnight",
     "windows": ["week"],
@@ -1223,6 +1484,13 @@ def hidden_user(data, uid):
 
 
 def stranger(data, uid):
+    """True when a loaded following list does not include this person.
+
+    With no following file, nobody is marked. A trial report skips that
+    fetch, and an empty list would otherwise mark every neighbour.
+    """
+    if not getattr(data, "following_known", False):
+        return False
     return uid not in data.following
 
 
@@ -1285,9 +1553,13 @@ def is_good_neighbour(uid, username, ids, names):
 
 
 def build_activity(data, since, until, top, like_weight, reply_weight, mode, now,
-                   good_neighbours=None):
+                   good_neighbours=None, only_posts=None):
     items = []
     seen = set()
+    allowed = None if only_posts is None else {str(pid) for pid in only_posts}
+
+    def counts_here(pid):
+        return allowed is None or (pid is not None and str(pid) in allowed)
 
     def add_item(kind, post, author, on_id):
         if hidden_user(data, author) or post.get("id") in seen:
@@ -1309,27 +1581,33 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
         })
 
     owner_posts = data.owner_post_ids()
+    starters = data.owner_original_ids
     for mention in data.mentions:
         author = mention.get("author_id")
-        parent = next(iter(referenced_ids(mention, "replied_to")), None)
-        # Top-level only: the direct parent is one of the owner's original posts.
-        # A later reply in the thread, whose parent is the owner's own reply, does not count.
-        if parent and parent in data.owner_original_ids:
+        parent = direct_reply_parent(mention)
+        # First-level only: the direct parent is an owner post or quote that
+        # starts the conversation. A later reply under the owner's reply does not.
+        if is_first_level_reply(mention, starters) and counts_here(parent):
             add_item("reply", mention, author, parent)
             continue
         if parent:
             continue
-        quoted = next((pid for pid in referenced_ids(mention, "quoted") if pid in owner_posts), None)
+        quoted = next(
+            (pid for pid in referenced_ids(mention, "quoted")
+             if pid in owner_posts and counts_here(pid)),
+            None,
+        )
         if quoted:
             add_item("quote", mention, author, quoted)
     for pid, quotes in data.quotes.items():
         for quote in quotes:
-            parent = next(iter(referenced_ids(quote, "replied_to")), None)
-            if parent and parent not in data.owner_original_ids:
+            parent = direct_reply_parent(quote)
+            if parent and not is_first_level_reply(quote, starters):
                 continue
             if parent:
-                add_item("reply", quote, quote.get("author_id"), parent)
-            else:
+                if counts_here(parent):
+                    add_item("reply", quote, quote.get("author_id"), parent)
+            elif counts_here(quote.get("_on_post") or pid):
                 add_item("quote", quote, quote.get("author_id"), quote.get("_on_post") or pid)
 
     likes_c, reposts_c = Counter(), Counter()
@@ -1338,11 +1616,16 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
     for pid, post in data.posts.items():
         if not data._in_window(post.get("created_at"), since, until):
             continue
+        if not counts_here(pid):
+            continue
         when = ts(post["created_at"])
-        for uid in data.likes.get(pid, []):
-            if not hidden_user(data, uid):
-                likes_c[uid] += 1
-                seen_at[uid].append(when)
+        # Likes on owner replies are not part of the score. The trial and the
+        # daily run both skip that fetch, and a missing file stays a zero.
+        if is_owner_original_post(post):
+            for uid in data.likes.get(pid, []):
+                if not hidden_user(data, uid):
+                    likes_c[uid] += 1
+                    seen_at[uid].append(when)
         for uid in data.reposts.get(pid, []):
             if not hidden_user(data, uid):
                 reposts_c[uid] += 1
@@ -1375,7 +1658,7 @@ def build_activity(data, since, until, top, like_weight, reply_weight, mode, now
             "id": uid,
             "name": name,
             "username": username,
-            "stranger": uid not in data.following,
+            "stranger": stranger(data, uid),
             "good": is_good_neighbour(uid, username, good_ids, good_names),
             "user": user if user.get("id") else {**user, "id": uid, "username": username, "name": name},
         }
@@ -1582,10 +1865,7 @@ def period_line(window, since, now, label):
     if window == "week":
         return "Last 7 days"
     if window == "first":
-        span = label or "Last 2 days"
-        if span.lower().startswith("last "):
-            span = span[0].lower() + span[1:]
-        return f"First report · {span}"
+        return "Trial report"
     if window == "custom":
         return label or "Custom period"
     return label or "This report"
@@ -1761,7 +2041,7 @@ def public_greeting(row, now):
 
 
 def write_chat_report(activity, path, handle, since, now, label, top=10, items_per_user=3,
-                      show=CHAT_SHOW, window="day"):
+                      show=CHAT_SHOW, window="day", intro=None):
     totals = activity["totals"]
     people = activity["threads"] + activity["interactions"] + activity["catch_up"]
     legend = []
@@ -1775,6 +2055,9 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
     if legend:
         lines.append(" · ".join(legend))
     lines.append("")
+    if intro:
+        lines.append(intro)
+        lines.append("")
     flowers = activity["interactions"]
     if not flowers:
         lines.append("No replies, likes, or reposts in this stretch.")
@@ -1793,12 +2076,13 @@ def write_chat_report(activity, path, handle, since, now, label, top=10, items_p
             lines.append("You're all caught up with your good neighbours 🎉")
         elif activity.get("catch_hint"):
             lines.append("No one to catch up with in this stretch.")
-            lines.append("Add people to your good neighbours list to keep up with them here.")
+            if window != "first":
+                lines.append("Add people to your good neighbours list to keep up with them here.")
         else:
             lines.append("No recent original posts from your good neighbours.")
     else:
         lines.append("### 🏡 What's new")
-        if activity.get("catch_hint"):
+        if activity.get("catch_hint") and window != "first":
             lines.append("Add people to your good neighbours list to keep up with them here.")
         lines.append("")
         for person in catch[:show]:
@@ -2144,7 +2428,9 @@ def extra_sections(data, since, now, handle, top, like_weight, reply_weight, per
         if not posts:
             lines.append("No posts in this window.")
         for when, pid, post in posts:
-            likes = sum(1 for uid in data.likes.get(pid, []) if not hidden_user(data, uid))
+            likes = 0
+            if is_owner_original_post(post):
+                likes = sum(1 for uid in data.likes.get(pid, []) if not hidden_user(data, uid))
             reposts = sum(1 for uid in data.reposts.get(pid, []) if not hidden_user(data, uid))
             text = snippet(post.get("text")) or "Post"
             lines.append(
@@ -2187,7 +2473,15 @@ def main():
     parser.add_argument("--fresh-hours", dest="fresh_hours", type=float,
                         help="owner override for how many hours a report stays fresh")
     parser.add_argument("--first-run", action="store_true",
-                        help="report the last first_run_days and always draw the picture")
+                        help="trial report: the latest original posts and quotes, no day window")
+    parser.add_argument("--trial-plan", action="store_true",
+                        help="print the trial reads for posts already saved in --data")
+    parser.add_argument("--estimate-reads", type=int, default=None,
+                        help="print the minute estimate for this many X reads")
+    parser.add_argument("--trial-post-count", dest="trial_post_count", type=int, default=None,
+                        help="how many original posts and quotes the trial uses (default 5)")
+    parser.add_argument("--read-budget", dest="read_budget", type=int, default=None,
+                        help="cap for --trial-plan (default 15)")
     parser.add_argument("--report-card", action="store_true",
                         help="also write the report card PNG (off by default)")
     parser.add_argument("--picture", dest="picture", action=argparse.BooleanOptionalAction,
@@ -2211,6 +2505,29 @@ def main():
             cfg[key] = as_list(value) if key in ("exclude", "windows") else value
     cfg["exclude"] = [item.lstrip("@") for item in as_list(cfg.get("exclude"))]
     cfg["windows"] = as_list(cfg.get("windows"))
+    if args.estimate_reads is not None and not args.trial_plan:
+        minutes = estimate_minutes(args.estimate_reads)
+        print(json.dumps({
+            "reads": int(args.estimate_reads),
+            "estimate_minutes": minutes,
+            "parallel_batch": PARALLEL_BATCH,
+            "per_read_seconds": PER_READ_SECONDS,
+            "per_minute_cap": READS_PER_MINUTE,
+            "message": estimate_message(args.estimate_reads),
+        }, ensure_ascii=False))
+        return
+    if args.trial_plan:
+        if not os.path.isdir(args.data):
+            parser.error(f"data folder not found: {args.data}")
+        limit = int(cfg.get("trial_post_count") or TRIAL_POST_COUNT)
+        budget = TRIAL_READ_BUDGET if args.read_budget is None else int(args.read_budget)
+        if limit < 1:
+            parser.error("trial_post_count must be at least 1")
+        if budget < 1:
+            parser.error("read budget must be at least 1")
+        payload = trial_plan(load_saved_posts(args.data), limit=limit, budget=budget)
+        print(json.dumps(payload, ensure_ascii=False))
+        return
     if not cfg["handle"] or not cfg["user_id"]:
         parser.error("handle and user_id are required (config.json or --handle/--user-id)")
     cfg["handle"] = str(cfg["handle"]).lstrip("@")
@@ -2256,6 +2573,7 @@ def main():
     me.update({k: v for k, v in stored.items() if v not in (None, "")})
     output = {}
     mode = cfg["report"]
+    trial_ids = None
     if args.since:
         since_at = ts(args.since)
         if since_at.tzinfo is None:
@@ -2264,11 +2582,16 @@ def main():
             parser.error("--since must be earlier than --now")
         windows = [("fresh", since_at, "Since your last report")]
     elif args.first_run:
-        first_days = int(cfg.get("first_run_days") or 2)
-        if first_days < 1:
-            parser.error("first_run_days must be at least 1")
-        first_label = "Last 24 hours" if first_days == 1 else f"Last {first_days} days"
-        windows = [("first", first_days, first_label)]
+        limit = int(cfg.get("trial_post_count") or TRIAL_POST_COUNT)
+        if limit < 1:
+            parser.error("trial_post_count must be at least 1")
+        chosen = select_trial_posts(data.posts.values(), limit)
+        trial_ids = [str(post["id"]) for post in chosen]
+        if chosen:
+            span_start = min(ts(post["created_at"]) for post in chosen)
+        else:
+            span_start = now - timedelta(minutes=1)
+        windows = [("first", span_start, "Trial report")]
         if args.picture is None:
             args.picture = True
     elif args.days:
@@ -2287,7 +2610,8 @@ def main():
         since = span if isinstance(span, datetime) else now - timedelta(days=span)
         activity = build_activity(
             data, since, now, cfg["top"], like_weight, reply_weight, mode, now,
-            good_neighbours=neighbours)
+            good_neighbours=neighbours,
+            only_posts=trial_ids if key == "first" else None)
         md_path = os.path.join(args.out, f"report_{key}.md")
         png_path = os.path.join(args.out, f"report_{key}.png")
         text, intent = thank_you_post(now, zone)
@@ -2308,10 +2632,11 @@ def main():
                 theme=cfg["theme"])
         thanks_path = os.path.join(args.out, f"report_{key}_thanks.md")
         more_path = os.path.join(args.out, f"report_{key}_more.json")
+        intro = trial_intro(len(trial_ids or [])) if key == "first" else None
         more = write_chat_report(
             activity, md_path, cfg["handle"], since, now, label,
             top=cfg["top"], items_per_user=int(cfg.get("items_per_user") or 3),
-            window=key)
+            window=key, intro=intro)
         with open(more_path, "w", encoding="utf-8") as fh:
             json.dump(more, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
@@ -2353,6 +2678,20 @@ def main():
                 },
             ],
         }
+        if key == "first":
+            output[key]["trial"] = {
+                "posts": trial_ids or [],
+                "post_count": len(trial_ids or []),
+                "trial_post_count": int(cfg.get("trial_post_count") or TRIAL_POST_COUNT),
+                "read_budget": TRIAL_READ_BUDGET,
+            }
+            output[key]["intro"] = intro
+            output[key]["community_offer"] = False
+            output[key]["share_offer"] = False
+            output[key]["next_steps"] = {
+                "prompt": "Want this as a daily report, a weekly report, or only when you ask?",
+                "options": ["Daily report", "Weekly report", "Only when I ask"],
+            }
         if cfg.get("state"):
             import report_state
             report_state.record(
@@ -2364,7 +2703,7 @@ def main():
                 override=cfg.get("fresh_hours"))
         if key == "week":
             output[key]["feedback_line"] = WEEKLY_FEEDBACK
-        else:
+        elif key != "first":
             suggestions = suggest_good_neighbours(
                 activity, neighbours, top=cfg["top"])
             if suggestions:

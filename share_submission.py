@@ -587,6 +587,11 @@ def validate_changes(repo, changes, labels=None, base_waiver=None, head_waiver=N
 
 
 def counts_from_data(data_dir, owner_id, now, days, exclude=None):
+    """Picture counts from saved JSON.
+
+    Replies are first-level only. Likes on the owner's replies are omitted,
+    so a report still scores when those liker files were never fetched.
+    """
     import x_neighbours as xn
     end = rules.parse_time(now)
     start = end - timedelta(days=int(days))

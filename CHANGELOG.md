@@ -8,6 +8,8 @@ python3 version.py
 
 ## Unreleased
 
+- The four functions are Period Report, Good Neighbours Newsletter, Neighbours Picture Day, and Community Honor Roll. Reports are Pages. The welcome tour greets the owner and stays titled Welcome tour. The Monday update check offers a newer version and does not pull, merge, or upgrade by itself.
+- This fork does not submit a neighbours file, does not open a share pull request, and does not download the global list. Community mode stays off unless the owner opts in, and even then nothing is sent. The committed founding seed uses synthetic handles. Scoring stays on this fork: depth-2 and depth-3 replies still score, and the snapshot directory stays `/workspace/content/followers`.
 - A `latest_*` file saved on an earlier UTC day than the other saved files is noted when that person is scored in this report. A file from that same day is not, a directory with no newer file is not, and a file the report does not score is not.
 - A saved reposter list or quote list uses the same short-list bar as likers: the file is present, the count is at least 10, and the saved rows are under 80% of that count.
 - The report notes a missing quote file for the same shared budget as likers and reposters: last 24 hours when `quote_count` is above 0, and the rest of the 7 days when it is at least 3. The duplicate shared-budget lines for reposts and quotes are removed from the runbook. Weekly-only still fetches every count above 0.

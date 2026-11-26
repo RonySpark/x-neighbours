@@ -194,6 +194,15 @@ class OfflineWeekReportTest(unittest.TestCase):
         missing = [name for name, path in wanted.items() if not os.path.isfile(path)]
         self.assertEqual(missing, [], f"missing files: {wanted}")
         self.assertGreater(os.path.getsize(self.output["picture"]), 0)
+        self.assertEqual(self.output["messages"][0]["images"], [])
+        self.assertEqual(self.output["fallback_messages"][1]["images"], [self.output["picture"]])
+        self.assertTrue(self.output["picture_asset"].startswith("asset:"))
+        with open(self.output["page_canvas"], encoding="utf-8") as fh:
+            canvas = fh.read()
+        self.assertIn(self.output["picture_asset"], canvas)
+        self.assertIn("<Image", canvas)
+        self.assertEqual(self.output["picture_nudge"], xn.PICTURE_NUDGE)
+        self.assertEqual(self.output["good_neighbours_page"]["page_title"], "Good Neighbours Newsletter")
 
     def test_waiting_is_counted_once_per_person(self):
         waiting = [row for row in self.open_items if row["kind"] == "first_reply"]
@@ -223,6 +232,34 @@ class OfflineWeekReportTest(unittest.TestCase):
         for row in extra:
             self.assertTrue(row.get("created_at"))
             self.assertRegex(row["created_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+class PictureOnlyTest(unittest.TestCase):
+    def test_picture_only_skips_the_report_page(self):
+        tmp = tempfile.mkdtemp(prefix="xn-picture-only-")
+        data = os.path.join(tmp, "data")
+        shutil.copytree(FIXTURES, data)
+        out = os.path.join(tmp, "out")
+        os.makedirs(out)
+        result = subprocess.run(
+            [
+                sys.executable, os.path.join(ROOT, "x_neighbours.py"),
+                "--config", os.path.join(data, "offline.json"),
+                "--data", data,
+                "--out", out,
+                "--now", NOW,
+                "--picture-only",
+                "--good-neighbours", os.path.join(data, "good_neighbours.json"),
+            ],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+        payload = json.loads(result.stdout)
+        self.assertTrue(os.path.isfile(payload["picture"]))
+        self.assertGreater(os.path.getsize(payload["picture"]), 0)
+        self.assertEqual(payload["messages"][0]["images"], [payload["picture"]])
+        self.assertNotIn("page_canvas", payload)
+        self.assertIn("thank_you", payload)
+        self.assertFalse(os.path.exists(os.path.join(out, "report_week.canvas.tsx")))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{
+  "min_recommendations": 2,
+  "rules_version": "1",
+  "founding_waiver": {
+    "submission": "",
+    "owner_id": "founding",
+    "owner_handle": "founding-submission"
+  }
+}

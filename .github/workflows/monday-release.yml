@@ -1,0 +1,40 @@
+name: Monday release
+
+on:
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: One line for versions/latest.json
+        required: true
+        type: string
+      release_notes:
+        description: Optional. 3 to 6 short lines for the owner, separated by |
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish the Monday release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+
+      - name: Write the versions folder
+        run: |
+          python3 versions_release.py \
+            --repo . \
+            --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --changelog "${{ github.event.inputs.changelog }}" \
+            --source-commit "$(git rev-parse --short HEAD)" \
+            --notes "${{ github.event.inputs.release_notes }}"
+
+      - name: Show the release file and stop
+        run: |
+          set -euo pipefail
+          python3 version.py
+          echo "This fork does not commit, tag, or push a release from this workflow."

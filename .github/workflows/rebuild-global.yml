@@ -1,0 +1,48 @@
+name: Rebuild global neighbours
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "submissions/**"
+      - "founding/**"
+      - "global/build.json"
+      - "opted-out/**"
+      - "banned/**"
+      - "global_build.py"
+      - "rules.py"
+      - "share_submission.py"
+  workflow_dispatch:
+
+# The global file itself is not a trigger. Merging the rebuild request
+# must not start another rebuild.
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rebuild:
+    name: Rebuild the global list
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+
+      - name: Rebuild from submissions
+        run: |
+          python3 global_build.py \
+            --repo . \
+            --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --source-commit "${{ github.sha }}"
+
+      - name: Leave the rebuilt list in the job log
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- global/neighbours.global.neighbours; then
+            echo "Global list already matches this commit."
+            exit 0
+          fi
+          echo "This fork does not push the global list and does not open a pull request."
+          git diff --stat -- global/neighbours.global.neighbours

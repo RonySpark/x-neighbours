@@ -1,0 +1,12 @@
+{
+  "format": "x-neighbours-global",
+  "version": 1,
+  "generated_at": "2026-11-26T18:00:00Z",
+  "source_commit": "",
+  "rules_version": "1",
+  "min_recommendations": 2,
+  "neighbours": {},
+  "owners": {},
+  "opted_out": [],
+  "banned_owners": []
+}

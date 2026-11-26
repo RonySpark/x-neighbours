@@ -1,0 +1,42 @@
+name: Neighbour Dog
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: Neighbour Dog review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the base branch
+        run: git fetch origin "${{ github.base_ref }}"
+
+      - name: Decide, and act when a token is configured
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          NEIGHBOUR_DOG_TOKEN: ${{ secrets.NEIGHBOUR_DOG_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          python3 share_submission.py validate-pr \
+            --repo . \
+            --base "origin/${{ github.base_ref }}" \
+            --labels "$LABELS" \
+            > "${RUNNER_TEMP}/validation.json" || true
+          if [ ! -s "${RUNNER_TEMP}/validation.json" ]; then
+            echo "The validator did not write a decision." >&2
+            exit 1
+          fi
+          python3 neighbour_dog.py act \
+            --validation "${RUNNER_TEMP}/validation.json" \
+            --pr "${PR_NUMBER}"

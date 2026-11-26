@@ -36,4 +36,6 @@ Keep real handles, user ids, and tokens out of code, fixtures, and docs. The sam
 
 ## 6. Review
 
-The owner reviews and merges.
+The owner reviews and merges code changes.
+
+A public neighbours submission is not a code change. It follows [RULES.md](RULES.md). Neighbour Dog reviews those pull requests. See [skills/neighbour-dog/SKILL.md](skills/neighbour-dog/SKILL.md).

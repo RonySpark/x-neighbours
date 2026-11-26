@@ -4,8 +4,11 @@
 RULES.md is the explanation. This module is the copy the checker, the global
 builder, and the tests run. Change a number here and in RULES.md together.
 """
+import json
 import math
+import os
 import re
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 
 
@@ -173,6 +176,78 @@ def canonical_user_id(value):
     if not USER_ID_RE.fullmatch(text):
         return ""
     return text
+
+
+def safe_branch(name):
+    """A git branch name safe to put in a URL or a ref. Empty when it is not."""
+    text = str(name or "").strip()
+    if not text or not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", text):
+        return ""
+    parts = text.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return ""
+    return text
+
+
+def checked_out_branch(repo="."):
+    """The branch named by .git/HEAD, or "" when HEAD is detached or missing."""
+    git_path = os.path.join(repo, ".git")
+    if os.path.isfile(git_path):
+        try:
+            with open(git_path, encoding="utf-8") as fh:
+                line = fh.read().strip()
+        except OSError:
+            return ""
+        if not line.startswith("gitdir:"):
+            return ""
+        git_path = line.split(":", 1)[1].strip()
+        if not os.path.isabs(git_path):
+            git_path = os.path.normpath(os.path.join(repo, git_path))
+    head = os.path.join(git_path, "HEAD")
+    try:
+        with open(head, encoding="utf-8") as fh:
+            text = fh.read().strip()
+    except OSError:
+        return ""
+    prefix = "ref: refs/heads/"
+    if not text.startswith(prefix):
+        return ""
+    return safe_branch(text[len(prefix):])
+
+
+def share_branch_from_config(path):
+    """share_branch from a bot config.json. Blank when the file or key is absent."""
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(doc, dict):
+        return ""
+    return str(doc.get("share_branch") or "").strip()
+
+
+def resolve_branch(explicit="", config_branch="", repo="."):
+    """Branch for raw URLs and share pull requests.
+
+    An explicit --base wins, then share_branch in config, then the checked-out
+    branch. main is the fallback when none of those is a usable name.
+    """
+    for candidate in (explicit, config_branch, checked_out_branch(repo)):
+        safe = safe_branch(candidate)
+        if safe:
+            return safe
+    return "main"
+
+
+def raw_file_url(branch, relpath):
+    """raw.githubusercontent.com URL for one file on a branch."""
+    chosen = safe_branch(branch) or "main"
+    root = REPO_URL.replace("https://github.com", "https://raw.githubusercontent.com")
+    quoted = urllib.parse.quote(chosen, safe="/")
+    return f"{root}/{quoted}/{relpath}"
 
 
 def clean_relpath(path):

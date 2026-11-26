@@ -45,11 +45,12 @@ PICTURE_REMINDER = (
 )
 UPGRADE_STEPS = [
     "git pull --ff-only",
-    "python3 -m pip install -r requirements.txt",
     "python3 version.py",
     "Read CHANGELOG.md when the version line changed.",
     "Keep config.json, data/, good_neighbours.json, state.json, community.json, and global_neighbours.neighbours.",
 ]
+PIP_STEP = "python3 -m pip install -r requirements.txt"
+PIP_WHEN_CHANGED = "If requirements.txt changed, run python3 -m pip install -r requirements.txt."
 
 
 def emit(payload):
@@ -188,11 +189,17 @@ def sunday_message(community_on, now, last_submitted_at=None, zone_name=""):
     }
 
 
-def weekly_plan(community_on):
-    """What a Monday check may touch. Individual mode fetches nothing."""
+def weekly_plan(community_on, branch="main"):
+    """What a Monday check may touch. Individual mode fetches nothing.
+
+    branch is the git branch for the raw file URLs. main is the default.
+    Pass v3, or the name from resolve_branch, when this clone is not on main.
+    """
+    chosen = rules.safe_branch(branch) or "main"
     if not community_on:
         return {
             "mode": "individual",
+            "branch": chosen,
             "fetch_versions": False,
             "fetch_global": False,
             "ask": False,
@@ -202,15 +209,22 @@ def weekly_plan(community_on):
         }
     return {
         "mode": "community",
+        "branch": chosen,
         "fetch_versions": True,
         "fetch_global": True,
-        "versions_url": f"{rules.REPO_URL.replace('https://github.com', 'https://raw.githubusercontent.com')}/main/{rules.LATEST_REL}",
-        "global_url": f"{rules.REPO_URL.replace('https://github.com', 'https://raw.githubusercontent.com')}/main/{rules.GLOBAL_REL}",
+        "versions_url": rules.raw_file_url(chosen, rules.LATEST_REL),
+        "global_url": rules.raw_file_url(chosen, rules.GLOBAL_REL),
         "ask": False,
         "upgrade": False,
         "pull": False,
         "save_global": False,
     }
+
+
+def on_monday(now=None):
+    """True when now is a Monday in UTC. Blank now uses the current UTC time."""
+    when = datetime.now(timezone.utc) if not now else rules.parse_time(now)
+    return when.weekday() == 0
 
 
 def check_update(community_on, local_version, latest, declined_version=None, force=False):
@@ -284,7 +298,20 @@ def check_update(community_on, local_version, latest, declined_version=None, for
     }
 
 
-def decide_upgrade(answer, remote_version):
+def upgrade_steps(requirements_changed=None):
+    """Pull steps. pip install is included only when requirements.txt changed.
+
+    None leaves a conditional line, for a caller that has not looked yet.
+    """
+    steps = list(UPGRADE_STEPS)
+    if requirements_changed is True:
+        steps.insert(1, PIP_STEP)
+    elif requirements_changed is None:
+        steps.insert(1, PIP_WHEN_CHANGED)
+    return steps
+
+
+def decide_upgrade(answer, remote_version, requirements_changed=None):
     """Record the owner's answer. This never runs git."""
     agreed = str(answer or "").strip().lower() in ("yes", "y", "upgrade")
     if not agreed:
@@ -302,7 +329,7 @@ def decide_upgrade(answer, remote_version):
         "pull": True,
         "executed": False,
         "version": remote_version,
-        "steps": list(UPGRADE_STEPS),
+        "steps": upgrade_steps(requirements_changed),
     }
 
 
@@ -371,7 +398,10 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     sub.add_parser("offer")
-    sub.add_parser("plan")
+    planned = sub.add_parser("plan")
+    planned.add_argument("--base", default="", help="branch for the raw URLs; default is the checkout, then main")
+    planned.add_argument("--config", default="", help="config.json; share_branch overrides the checkout")
+    planned.add_argument("--repo", default=".")
     joined = sub.add_parser("join")
     joined.add_argument("--now")
     left = sub.add_parser("leave")
@@ -386,14 +416,21 @@ def main():
     check = sub.add_parser("check-update")
     check.add_argument("--latest", help="path to versions/latest.json")
     check.add_argument("--local", help="defaults to the VERSION file")
-    check.add_argument("--force", action="store_true")
+    check.add_argument("--now", default="", help="UTC time for the Monday guard")
+    check.add_argument("--force", action="store_true", help="run the check on a day other than Monday")
     decide = sub.add_parser("decide-upgrade")
     decide.add_argument("--answer", required=True)
     decide.add_argument("--version", required=True)
+    decide.add_argument(
+        "--requirements-changed", choices=("yes", "no", "auto"), default="auto",
+        help="include pip install only when requirements.txt changed",
+    )
     save_cmd = sub.add_parser("save-global")
     save_cmd.add_argument("--src", required=True)
     save_cmd.add_argument("--dest", default="")
     save_cmd.add_argument("--weekly", action="store_true")
+    save_cmd.add_argument("--now", default="", help="UTC time for the Monday guard")
+    save_cmd.add_argument("--force", action="store_true", help="save on a day other than Monday")
     share_cmd = sub.add_parser("record-share")
     share_cmd.add_argument("--at", required=True)
     share_cmd.add_argument("--pending-url", default="")
@@ -417,7 +454,9 @@ def run(args):
         emit(offer(args.file))
         return 0
     if args.cmd == "plan":
-        emit({"ok": True, **weekly_plan(load(args.file)["community"])})
+        branch = rules.resolve_branch(
+            args.base, rules.share_branch_from_config(args.config), args.repo)
+        emit({"ok": True, **weekly_plan(load(args.file)["community"], branch)})
         return 0
     if args.cmd == "join":
         emit(join(args.file, args.now))
@@ -441,6 +480,17 @@ def run(args):
         if not current["community"]:
             emit(check_update(False, version_mod.version(), None))
             return 0
+        if not args.force and not on_monday(args.now):
+            emit({
+                "ok": False,
+                "check": False,
+                "ask": False,
+                "upgrade": False,
+                "pull": False,
+                "read_versions": False,
+                "reason": "not Monday",
+            })
+            return 1
         if not args.latest:
             emit({"ok": False, "error": "pass --latest"})
             return 1
@@ -455,7 +505,8 @@ def run(args):
         emit(result)
         return 0 if result.get("ok") else 1
     if args.cmd == "decide-upgrade":
-        result = decide_upgrade(args.answer, args.version)
+        requirements = {"yes": True, "no": False}.get(args.requirements_changed)
+        result = decide_upgrade(args.answer, args.version, requirements_changed=requirements)
         if result.get("declined_version"):
             current = load(args.file)
             current["declined_version"] = result["declined_version"]
@@ -469,6 +520,14 @@ def run(args):
     if args.cmd == "save-global":
         current = load(args.file)
         dest = args.dest or os.path.join(os.path.dirname(os.path.abspath(args.file)), rules.LOCAL_GLOBAL_NAME)
+        if current["community"] and args.weekly and not args.force and not on_monday(args.now):
+            emit({
+                "ok": False,
+                "saved": False,
+                "reason": "not Monday",
+                "read_global": False,
+            })
+            return 1
         if not current["community"] or not args.weekly:
             emit(save_global(current["community"], args.weekly, None, dest))
             return 0

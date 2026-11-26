@@ -1,12 +1,12 @@
 # Founding list
 
-The global list starts empty. This folder does not contain a founding submission yet.
+The global list starts empty. This folder does not contain a founding submission, and it should not. Do not commit a pre-made list of neighbours here.
 
-The first real submission should come from a new bot, through the normal share flow in [`skills/x-neighbours-share/SKILL.md`](../skills/x-neighbours-share/SKILL.md). Do not put a personal name or handle on that list. The global builder credits the file named below as `founding` / `founding-submission`, even when a test bot wrote the file.
+The founding list is the first real submission through the normal share flow: one file at `submissions/<x user id>/<UTC timestamp>.neighbours`. That file keeps the submitter's real `user_id` and handle. The path has to match that user id, and validation checks it the same way as any other share. The neutral names `founding` and `founding-submission` are not written into the file.
 
-## Point the waiver at the file
+## Point the waiver at that file
 
-After that one submission is merged, set `founding_waiver.submission` in [`global/build.json`](../global/build.json) to the exact repo path, for example:
+After that one submission is merged, set `founding_waiver.submission` in [`global/build.json`](../global/build.json) to that exact path. Leave the credit fields as the neutral identity:
 
 ```json
 {
@@ -21,13 +21,15 @@ After that one submission is merged, set `founding_waiver.submission` in [`globa
 }
 ```
 
-Leave `owner_id` and `owner_handle` as the neutral identity. Only that exact path bypasses the two-recommendation rule. A later file in this folder, or a submission that claims to be founding, does not.
+`owner_id` and `owner_handle` are what the global list displays. They are not the submitter's handle. Only that exact path bypasses the two-recommendation rule. A later file from the same owner, or a file under `founding/`, does not.
 
-Open that config change as its own pull request and add the label `maintainer-waiver`. Without that label the validate Action rejects a waiver-path edit. Neighbour Dog must not merge it. The maintainer merges it.
+The waiver path is blank in this repo until that first file exists. An empty path does nothing.
 
-The rebuild Action then loads that file. Each account in it enters `global/neighbours.global.neighbours` with `source` set to `founding` and one `recommended_by` row for the neutral identity. Until the path is set, a single owner’s submission stays out of the global list, which is the normal two-recommendation rule.
+Open the config change as its own pull request and add the label `maintainer-waiver`. Without that label the validate Action rejects a waiver-path edit. Neighbour Dog must not merge it. The maintainer merges it.
 
-Opt-out still removes a founding entry. A banned owner’s later submissions do not change this seed. A founding entry stays until opt-out. If another owner later recommends the same account, that row is appended and `source` stays `founding`. The displayed handle refreshes from the newest recommendation.
+The rebuild then loads that file. Each account in it enters `global/neighbours.global.neighbours` with `source` set to `founding` and one `recommended_by` row for `founding` / `founding-submission`. The row's `submission` is the real path. The submitter's handle is not copied into that credit. Until the path is set, a single owner's submission stays out of the global list.
+
+Opt-out still removes a founding entry. A banned owner's later submissions do not change this seed. A founding entry stays until opt-out. If another owner later recommends the same account, that row is appended and `source` stays `founding`. The displayed handle of the neighbour refreshes from the newest recommendation.
 
 ## What this file is not
 

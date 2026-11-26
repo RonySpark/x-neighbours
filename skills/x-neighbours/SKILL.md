@@ -132,9 +132,9 @@ Skip a post you already saved likers for earlier the same day.
 
 Same budget rule as likes, using `repost_count` and `quote_count` from the post's `public_metrics`. Last 24 hours: every post with that count above 0. Days 2–7: only counts of 3 or more. Skip a file you already saved.
 
-`get_posts_reposted_by` — `id` the post id, `max_results` 100, `user.fields=username,name,description,public_metrics,profile_image_url`. Save as `reposts_<postid>`.
+`get_posts_reposted_by` — `id` the post id, `max_results` 100 (the tool maximum; do not lower it), `user.fields=username,name,description,public_metrics,profile_image_url`. Save as `reposts_<postid>`.
 
-`get_posts_quoted_posts` — `id` the post id, `max_results` 100, `post.fields=created_at,author_id,text,referenced_tweets,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url`. Save as `quotes_<postid>`.
+`get_posts_quoted_posts` — `id` the post id, `max_results` 100 (the tool maximum is 100 and the minimum is 10), `post.fields=created_at,author_id,text,referenced_tweets,conversation_id`, `expansions=author_id`, `user.fields=username,name,description,profile_image_url`. Save as `quotes_<postid>`.
 
 ### 5. Posts the owner already engaged with
 

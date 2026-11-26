@@ -45,10 +45,10 @@ Before any community behaviour, run `status`. If `community` is false, do not fe
 
 ```bash
 python3 community.py --file <community path> status
-python3 community.py --file <community path> plan
+python3 community.py --file <community path> plan --repo .
 ```
 
-`plan` says what a Monday check may touch. In individual mode `fetch_versions` and `fetch_global` are false. Obey that. Do not open those URLs anyway.
+`plan` says what a Monday check may touch. `branch` is the git branch in `versions_url` and `global_url`. It is `share_branch` from `config.json` when that is set, otherwise the checked-out branch, otherwise `main`. Pass `--base v3` when this clone should read `v3` and the checkout is something else. In individual mode `fetch_versions` and `fetch_global` are false. Obey that. Do not open those URLs anyway.
 
 ## Picture tag
 
@@ -82,8 +82,10 @@ On the Monday report, after the two messages, and only when `plan` says to fetch
 2. Run:
 
 ```bash
-python3 community.py --file <community path> check-update --latest <temp file>
+python3 community.py --file <community path> check-update --latest <temp file> --now <T>
 ```
+
+`<T>` is the current UTC time. On any UTC day other than Monday the command returns `reason` `not Monday` and does not compare versions. Do not pull. If they ask to check on another day, add `--force`. Still ask before pulling.
 
 3. If `ask` is true, send `message` as one yes/no card. Do not `git pull` yet.
 4. If they say no:
@@ -100,15 +102,15 @@ Stay on the current version. Do not ask again until the next Monday, unless they
 python3 community.py --file <community path> decide-upgrade --answer yes --version <remote_version>
 ```
 
-`executed` is false. You run the `steps` yourself: `git pull --ff-only`, install requirements when that file changed, `python3 version.py`, read `CHANGELOG.md`, and tell them the new version in one line. Keep `config.json`, `data/`, the good neighbours file, `state.json`, `community.json`, and `global_neighbours.neighbours`.
+`executed` is false. You run the `steps` yourself. `git pull --ff-only` only. Run `python3 -m pip install -r requirements.txt` only when a step says to, which is when `requirements.txt` changed. If you already know, pass `--requirements-changed yes` or `no` so the step list matches. Then `python3 version.py`, read `CHANGELOG.md`, and tell them the new version in one line. Keep `config.json`, `data/`, the good neighbours file, `state.json`, `community.json`, and `global_neighbours.neighbours`.
 
 6. On the same check, download `global_url` from `plan` and save it:
 
 ```bash
-python3 community.py --file <community path> save-global --src <downloaded file> --weekly
+python3 community.py --file <community path> save-global --src <downloaded file> --weekly --now <T>
 ```
 
-Do this even when there is no new bot version. Skip it on every other day. Recommendations you show later come from this local file. The owner chooses who to follow. You do not follow anyone.
+Do this even when there is no new bot version. `--now` is the same UTC time. The command refuses with `reason` `not Monday` on any other UTC weekday, even if `--weekly` is passed. Do not add `--force` for a mid-week download. Recommendations you show later come from this local file. The owner chooses who to follow. You do not follow anyone.
 
 If they ask “check for updates” on another day, you may run the check with `--force` on `check-update`. Still ask before pulling. Do not download the global file mid-week.
 

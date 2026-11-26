@@ -1,0 +1,19 @@
+{
+  "rules_version": "1",
+  "score": "likes + reposts + 3 * (replies + quotes)",
+  "like_weight": 1,
+  "reply_weight": 3,
+  "min_score": "max(8, ceil(50 * period_days / 90))",
+  "conversation_floor": 2,
+  "default_period_days": 90,
+  "min_period_days": 7,
+  "max_period_days": 93,
+  "cap": 100,
+  "min_recommendations": 2,
+  "note_max_chars": 140,
+  "max_tags": 3,
+  "max_file_bytes": 262144,
+  "founding_owner_id": "founding",
+  "founding_owner_handle": "founding-submission",
+  "picture_tag": "SkyXFunNext"
+}

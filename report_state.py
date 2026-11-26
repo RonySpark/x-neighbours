@@ -94,6 +94,25 @@ def age_label(hours):
     return f"{days} days ago"
 
 
+# The Monday update check stores these beside the report clock. A report
+# must not drop them. bot_version is written only when the file is created,
+# so an older file with no bot_version still looks like a v2 upgrade.
+UPGRADE_KEYS = ("bot_version", "notes_shown_for", "declined_version", "declined_on")
+
+
+def _previous(path):
+    if not path or not os.path.isfile(path):
+        return {}, True
+    try:
+        with open(path, encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}, False
+    if not isinstance(loaded, dict):
+        return {}, False
+    return loaded, False
+
+
 def record(path, at, since, until, replies, quotes, likes, reposts, override=None):
     at = at if isinstance(at, datetime) else parse_time(at)
     since = since if isinstance(since, datetime) else parse_time(since)
@@ -101,7 +120,9 @@ def record(path, at, since, until, replies, quotes, likes, reposts, override=Non
     span_hours = max((until - since).total_seconds() / 3600, 1 / 60)
     per_day = activity_per_day(replies, quotes, likes, reposts, span_hours)
     fresh = hours_for(per_day, override)
-    doc = {
+    previous, created = _previous(path)
+    doc = {key: previous[key] for key in UPGRADE_KEYS if key in previous}
+    doc.update({
         "version": 1,
         "last_report_at": iso(at),
         "since": iso(since),
@@ -112,7 +133,12 @@ def record(path, at, since, until, replies, quotes, likes, reposts, override=Non
         "reposts": int(reposts),
         "activity_per_day": round(per_day, 1),
         "fresh_hours": fresh,
-    }
+    })
+    if created:
+        import version as version_mod
+        current = version_mod.version()
+        doc["bot_version"] = current
+        doc["notes_shown_for"] = current
     save(path, doc)
     return doc
 

@@ -1,0 +1,30 @@
+name: Validate share submissions
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate share submissions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the base branch
+        run: git fetch origin "${{ github.base_ref }}"
+
+      - name: Check submission files
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          python3 share_submission.py validate-pr \
+            --repo . \
+            --base "origin/${{ github.base_ref }}" \
+            --labels "$LABELS"

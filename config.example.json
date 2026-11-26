@@ -7,6 +7,7 @@
   "rings": 3,
   "show_names": true,
   "first_run_days": 2,
+  "trial_post_count": 5,
   "items_per_user": 3,
   "theme": "midnight",
   "windows": ["week"],

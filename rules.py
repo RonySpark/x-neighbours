@@ -294,7 +294,14 @@ def counts_of(interactions):
 
 
 def eligibility(interactions, days):
-    """Return (ok, reason). reason is empty when the row passes."""
+    """Return (ok, reason). reason is empty when the row passes.
+
+    `replies` are first-level replies only: a direct reply to an owner post
+    or quote. A later reply under the owner's own reply does not count
+    toward the conversation floor or the score. `likes` are likes on those
+    original posts and quotes. Likes on the owner's replies are not included.
+    The counts are already filtered before they reach this function.
+    """
     counts = counts_of(interactions)
     conversation = counts["replies"] + counts["quotes"]
     if conversation < CONVERSATION_FLOOR:

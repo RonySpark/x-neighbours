@@ -14,17 +14,17 @@ A big thank you to everyone who has helped make X Neighbours better 💐 New nei
 
 *Sample report with fictional people.*
 
-The first run covers the last two days, so it loads quickly. Every report includes the house-framed picture and a thank-you link. With only a few neighbours the picture uses one larger ring instead of an empty three-ring chart.
+The first report is a trial: the latest original posts and quotes (`trial_post_count`, default 5), not a day window, and about 15 X reads. The header says `Trial report`. Every report includes the house-framed picture and a thank-you link. With only a few neighbours the picture uses one larger ring instead of an empty three-ring chart.
 
 ![A first-run picture with fictional neighbours](docs/sample-few-neighbours.png)
 
 *Made-up neighbours, one ring, house frames. The display name sits under each avatar, with the @username below it. From `examples/few`.*
 
-People the owner does not follow are marked 👤?. There is no followed/unfollowed split. Catch up with your good neighbours lists each person's latest original post (not a reply or a plain repost; a quote of their own counts) that the owner has not already liked, replied to, reposted, or quoted. The age is that post's `created_at` against the current UTC time. People with none left in the saved page are skipped. If nothing is left to show, the section says you're all caught up. When the owner has a good neighbours list, that section shows only those people. When the list is empty, it stays the top people from the period and adds one hint line. A ⭐ marks a good neighbour in the other sections too. The ordering score stays in config and is not printed.
+People the owner does not follow are marked 👤? once a following list has been loaded. A trial report skips that list, so it does not show 👤? or that legend. There is no followed/unfollowed split. Catch up with your good neighbours lists each person's latest original post (not a reply or a plain repost; a quote of their own counts) that the owner has not already liked, replied to, reposted, or quoted. The age is that post's `created_at` against the current UTC time. People with none left in the saved page are skipped. If nothing is left to show, the section says you're all caught up. When the owner has a good neighbours list, that section shows only those people. When the list is empty, it stays the top people from the period and adds one hint line. A ⭐ marks a good neighbour in the other sections too. The ordering score stays in config and is not printed.
 
 The thank-you sentence is “My X neighbours circle, November 5!” plus a short thanks, using the report date in `timezone` (UTC if that key is blank). It does not mention any username. Community mode, which is off unless the owner opts in, adds one reminder to tag @SkyXFunNext when they post the picture. The bot still does not post it. Individual mode does not add that line.
 
-Every report has four parts, written so a phone can read them without sideways scrolling. The header is two lines: the period (`Since your last report · 30 min ago`, `Last 24 hours`, `Last 7 days`, or `First report · last 2 days`), then emoji counts only (`💬 3 · 🔁💬 0 · ❤️ 0 · 🔁 0`). The sections are 💐 Flowers, 🏡 What's new, 👋 Replies, then Thank your neighbours on X. The first three show five entries and say how many are left. The house-framed picture sits in that last message with the thank-you words. The link does not attach the picture; the owner saves it and attaches it in X. Profile photos are kept as metadata and are not placed in the chat text. The original three-ring layout is unchanged, and every avatar, including the centre, sits in a simple house frame. `--no-picture` skips the image.
+Every report has four parts, written so a phone can read them without sideways scrolling. The header is two lines: the period (`Since your last report · 30 min ago`, `Last 24 hours`, `Last 7 days`, or `Trial report`), then emoji counts only (`💬 3 · 🔁💬 0 · ❤️ 0 · 🔁 0`). The sections are 💐 Flowers, 🏡 What's new, 👋 Replies, then Thank your neighbours on X. The first three show five entries and say how many are left. The house-framed picture sits in that last message with the thank-you words. The link does not attach the picture; the owner saves it and attaches it in X. Profile photos are kept as metadata and are not placed in the chat text. The original three-ring layout is unchanged, and every avatar, including the centre, sits in a simple house frame. `--no-picture` skips the image.
 
 ![Sample neighbours picture with house frames, fictional data](docs/sample-neighbours.png)
 
@@ -56,7 +56,7 @@ python3 x_neighbours.py --now 2026-11-04T18:00:00Z
 | `report_*_thanks.md` | Section 4, the thank-you text and link. The picture is sent in the same chat message |
 | `x_neighbours_*.png` | The house-framed picture, included inside section 4 |
 
-A Grok Bot that runs this for its owner should follow [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md). [BOT.md](BOT.md) only points at that file. Any concern in chat can become a short GitHub issue: the bot drafts it and hands over a prefilled link, once per topic, and the owner submits it. The Monday report ends with one line inviting that. The draft leaves out handles, names, and post text. A contributor's bot that changes this repo follows [skills/x-neighbours-maintain/SKILL.md](skills/x-neighbours-maintain/SKILL.md).
+A Grok Bot that runs this for its owner should follow [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md) after the first report. The trial report is [skills/x-neighbours/FIRST_RUN.md](skills/x-neighbours/FIRST_RUN.md). [BOT.md](BOT.md) only points at those files. The getting-started skill points at the trial file. Any concern in chat can become a short GitHub issue: the bot drafts it and hands over a prefilled link, once per topic, and the owner submits it. The Monday report ends with one line inviting that. The draft leaves out handles, names, and post text. A contributor's bot that changes this repo follows [skills/x-neighbours-maintain/SKILL.md](skills/x-neighbours-maintain/SKILL.md).
 
 ## Version
 
@@ -149,6 +149,7 @@ These are not in the repo, because they are accounts and secrets:
   "rings": 3,
   "show_names": true,
   "first_run_days": 2,
+  "trial_post_count": 5,
   "items_per_user": 3,
   "theme": "midnight",
   "windows": ["week"],
@@ -168,7 +169,8 @@ These are not in the repo, because they are accounts and secrets:
 | `like_weight`, `reply_weight` | Quiet points. A reply or quote uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |
-| `first_run_days` | How many days the first fetch covers. Default 2. Daily stays 24 hours. Monday stays 7 days |
+| `trial_post_count` | How many of the latest original posts and quotes the trial report uses. Default 5. No day window. Replies are left out. The read budget is about 15 |
+| `first_run_days` | Not used by the trial report. An older config can still contain it |
 | `items_per_user` | Reply and quote lines shown per person before `+N more`. Default 3 |
 | `show_names` | Display name under each avatar, with @username on the line below. @username alone when the account has no name |
 | `theme` | `midnight` (default), `light`, or `sunset` |
@@ -181,9 +183,9 @@ These are not in the repo, because they are accounts and secrets:
 | `report` | `both` (default), `likes`, or `replies` |
 | `per_post`, `per_day` | Extra markdown sections. Off unless you ask |
 
-Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--version`.
+Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--trial-plan`, `--estimate-reads`, `--trial-post-count`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--version`.
 
-A plain run writes the markdown report and the neighbours picture. `--first-run` uses `first_run_days`. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
+A plain run writes the markdown report and the neighbours picture. `--first-run` is the trial report (`trial_post_count` latest originals and quotes). `--trial-plan` prints the reads for posts already saved. `--estimate-reads N` prints how many minutes those reads should take. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
 
 ```bash
 python3 x_neighbours.py --now 2026-11-04T18:00:00Z --report likes
@@ -213,23 +215,23 @@ Pick a UTC timestamp `T` when you start: the actual current UTC time, not a left
 |---|---|---|---|
 | 1 | `get_users_posts` | `id={ID}`, `start_time=START`, `exclude=retweets` (do not exclude replies), `max_results=100`, `post.fields=created_at,public_metrics,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, `user.fields=username,name,profile_image_url,public_metrics` | `posts_1`, `posts_2`, … |
 | 2 | `get_users_mentions` | `id={ID}`, `start_time=START`, `max_results=100`, `post.fields=created_at,author_id,text,in_reply_to_user_id,referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, `user.fields=username,name,description,profile_image_url`. Save `includes` too | `mentions_1`, … |
-| 3 | `get_posts_liking_users` | Posts with likes. `user.fields=username,name,description,profile_image_url` | `likes_<postid>` |
+| 3 | `get_posts_liking_users` | Original posts and quotes with likes. Never the owner's replies. `user.fields=username,name,description,profile_image_url` | `likes_<postid>` |
 | 4 | `get_posts_reposted_by` | Posts with reposts. Same user fields | `reposts_<postid>` |
 | 5 | `get_posts_quoted_posts` | Posts with quotes. `post.fields=created_at,author_id,text,referenced_tweets`, `expansions=author_id` | `quotes_<postid>` |
 | 6 | `get_users_liked_posts` and `get_users_posts` | Owner only, before Catch up. Likes: `max_results=20`, at most two pages, saved as `my_likes_1` and `my_likes_2`. Own posts: `max_results=20`, no `exclude`, one page, `post.fields` include `referenced_tweets,conversation_id`, `expansions=author_id,referenced_posts`, saved as `my_posts_1`. A failed call is skipped. Those replies are how Replies marks a mention answered | `my_likes_1`, `my_posts_1` |
 | 7 | `get_users_posts` | Each good neighbour (at most 20), or at most 10 catch-up people when the list is empty. `max_results=100`, `exclude` `replies` and `retweets`, `post.fields=created_at,text,conversation_id`, `expansions=author_id,in_reply_to_user_id,referenced_posts`. One more page as `latest_<userid>_p2` if the first page is all engaged | `latest_<userid>` |
 | 8 | `get_users_me_followers` and `get_users_me_following` | `max_results=1000`. Refresh on Mondays | `followers_1`, `following_1`, … |
 
-On a Grok Bot these tools are on the X connection. A reply counts only when its direct `replied_to` parent is one of your original posts, not one of your replies. A quote of your post still counts. You have answered a reply when one of your own replies points `replied_to` at that reply's id. Your own posts are ignored as neighbours.
+On a Grok Bot these tools are on the X connection. A reply counts only when its direct `replied_to` parent is one of your original posts or quotes, not one of your replies. `conversation_id` and `in_reply_to_user_id` are not enough on their own: a later reply in the same thread shares both. A quote of your post still counts. You have answered a reply when one of your own replies points `replied_to` at that reply's id. Your own posts are ignored as neighbours. Likers are fetched for original posts and quotes only, never for your replies. The picture score and the share check use that same reply count.
 
 ### Keeping the read count down
 
-Stay around **30 calls a minute** and **1,000 calls a day**. Send about 12 calls, then pause.
+Stay around **30 calls a minute** and **1,000 calls a day**. Send independent reads in parallel batches of up to 12, and stay under 30 a minute.
 
 Likes, reposts, and quotes are one call per post:
 
-- The last 24 hours: every post with that count above 0.
-- Days 2–7: only counts of 3 or more.
+- Likers: original posts and quotes only. Never the owner's replies. The last 24 hours and `like_count` greater than 0, or days 2–7 and `like_count` at least 3.
+- Reposts and quote posts: every post, including replies. The last 24 hours: every post with that count above 0. Days 2–7: only counts of 3 or more.
 - Latest posts: one call per good neighbour (at most 20), or at most 10 when that list is empty. If that page is already all engaged, fetch one more page.
 - Already-engaged posts: at most two like pages and one page of the owner's own posts. Reuse them for the rest of the day. A failed call does not stop the report.
 - One page is enough for almost every post. Fetch another page only while you are inside the day's budget.

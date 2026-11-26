@@ -32,7 +32,7 @@ If `allowed` is false, tell them `next_allowed_at` and stop.
 
 ## Build the list
 
-Use the saved JSON in `data/`, the same counts as the picture. Default period is 90 days. If they ask for a shorter window, `--days` may be from 7 to 93. Do not invent accounts. Do not use only the 20-person catch-up list.
+Use the saved JSON in `data/`, the same counts as the picture. A reply counts only when it replies directly to an owner post or quote. A later reply in that thread does not. Likes are likes on those posts and quotes, not on the owner's replies. Default period is 90 days. If they ask for a shorter window, `--days` may be from 7 to 93. Do not invent accounts. Do not use only the 20-person catch-up list.
 
 The draft is a private file in the bot store. It is not the file that gets committed. `open-pr` reads the draft and opens a pull request that adds `submissions/<user id>/<timestamp>.neighbours`. Do not copy the draft into `submissions/` yourself, and do not commit `share-draft.neighbours`.
 

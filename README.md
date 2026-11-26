@@ -2,7 +2,7 @@
 
 [![Tests](https://github.com/Skybatan/x-neighbours/actions/workflows/tests.yml/badge.svg)](https://github.com/Skybatan/x-neighbours/actions/workflows/tests.yml)
 
-X Neighbours helps a creator catch up with the people who replied, quoted, liked, and reposted. The default result is a short chat report (markdown). A report-card PNG is optional (`--report-card`). A bot does the reading on X. The script only reads the saved JSON. It does not follow, like, post, or send messages.
+X Neighbours helps a creator catch up with the people who replied, quoted, liked, and reposted. The report is a Page with the same sections as the short markdown report. The chat gets a one-line headline and the Page link. A report-card PNG is optional (`--report-card`). A bot does the reading on X. The script only reads the saved JSON. It does not follow, like, post, or send messages.
 
 ## Contributors
 
@@ -14,17 +14,17 @@ A big thank you to everyone who has helped make X Neighbours better 💐 New nei
 
 *Sample report with fictional people.*
 
-The first report is a trial: the latest original posts and quotes (`trial_post_count`, default 5), not a day window, and about 15 X reads. The header says `Trial report`. Every report includes the house-framed picture and a thank-you link. With only a few neighbours the picture uses one larger ring instead of an empty three-ring chart.
+The first report is a short demo: the latest original posts and quotes (`trial_post_count`, default 5), not a day window, and about 15 X reads. The header says `First report`. Every report includes the house-framed picture and a thank-you link. With only a few neighbours the picture uses one larger ring instead of an empty three-ring chart.
 
 ![A first-run picture with fictional neighbours](docs/sample-few-neighbours.png)
 
 *Made-up neighbours, one ring, house frames. The display name sits under each avatar, with the @username below it. From `examples/few`.*
 
-People the owner does not follow are marked 👤? once a following list has been loaded. A trial report skips that list, so it does not show 👤? or that legend. There is no followed/unfollowed split. Catch up with your good neighbours lists each person's latest original post (not a reply or a plain repost; a quote of their own counts) that the owner has not already liked, replied to, reposted, or quoted. The age is that post's `created_at` against the current UTC time. People with none left in the saved page are skipped. If nothing is left to show, the section says you're all caught up. When the owner has a good neighbours list, that section shows only those people. When the list is empty, it stays the top people from the period and adds one hint line. A ⭐ marks a good neighbour in the other sections too. The ordering score stays in config and is not printed.
+People the owner does not follow are marked 👤? once a following list has been loaded. The first report skips that list, so it does not show 👤? or that legend. There is no followed/unfollowed split. Catch up with your good neighbours lists each person's latest original post (not a reply or a plain repost; a quote of their own counts) that the owner has not already liked, replied to, reposted, or quoted. The age is that post's `created_at` against the current UTC time. People with none left in the saved page are skipped. If nothing is left to show, the section says you're all caught up. When the owner has a good neighbours list, that section shows only those people. When the list is empty, it stays the top people from the period and adds one hint line. A ⭐ marks a good neighbour in the other sections too. The ordering score stays in config and is not printed.
 
 The thank-you sentence is “My X neighbours circle, November 5!” plus a short thanks, using the report date in `timezone` (UTC if that key is blank). It does not mention any username. Community mode, which is off unless the owner opts in, adds one reminder to tag @SkyXFunNext when they post the picture. The bot still does not post it. Individual mode does not add that line.
 
-Every report has four parts, written so a phone can read them without sideways scrolling. The header is two lines: the period (`Since your last report · 30 min ago`, `Last 24 hours`, `Last 7 days`, or `Trial report`), then emoji counts only (`💬 3 · 🔁💬 0 · ❤️ 0 · 🔁 0`). The sections are 💐 Flowers, 🏡 What's new, 👋 Replies, then Thank your neighbours on X. The first three show five entries and say how many are left. The house-framed picture sits in that last message with the thank-you words. The link does not attach the picture; the owner saves it and attaches it in X. Profile photos are kept as metadata and are not placed in the chat text. The original three-ring layout is unchanged, and every avatar, including the centre, sits in a simple house frame. `--no-picture` skips the image.
+Every report has four parts, written so a phone can read them without sideways scrolling. The header is two lines: the period (`Since your last report · 30 min ago`, `Last 24 hours`, `Last 7 days`, or `First report`), then emoji counts only (`💬 3 · 🔁💬 0 · ❤️ 0 · 🔁 0`). The sections are 💐 Flowers, 🏡 What's new, 👋 Replies, then Thank your neighbours on X. The first three show five entries and say how many are left. The bot delivers that report as a Page. The chat message is a short headline (the counts, and how many replies need an answer) and the Page link. The house-framed picture is attached to that short message. The thank-you words and the link are on the Page. The link does not attach the picture; the owner saves it and attaches it in X. Profile photos are kept as metadata and are not placed on the Page. The original three-ring layout is unchanged, and every avatar, including the centre, sits in a simple house frame. `--no-picture` skips the image.
 
 ![Sample neighbours picture with house frames, fictional data](docs/sample-neighbours.png)
 
@@ -52,11 +52,12 @@ python3 x_neighbours.py --now 2026-11-04T18:00:00Z
 
 | File | What it is |
 |---|---|
-| `report_week.md` | Sections 1–3. `report_day.md` for a day, `report_first.md` for the first run, `report_fresh.md` since the last report |
-| `report_*_thanks.md` | Section 4, the thank-you text and link. The picture is sent in the same chat message |
-| `x_neighbours_*.png` | The house-framed picture, included inside section 4 |
+| `report_week.md` | Sections 1–3, the plain-text fallback. `report_day.md` for a day, `report_first.md` for the first run, `report_fresh.md` since the last report |
+| `report_*_thanks.md` | Section 4, the thank-you text and link, for that fallback |
+| `report_*.canvas.tsx` | The Page. `report_page.py` fills `templates/report.canvas.tsx` |
+| `x_neighbours_*.png` | The house-framed picture, attached to the short chat message |
 
-A Grok Bot that runs this for its owner should follow [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md) after the first report. The trial report is [skills/x-neighbours/FIRST_RUN.md](skills/x-neighbours/FIRST_RUN.md). [BOT.md](BOT.md) only points at those files. The getting-started skill points at the trial file. Any concern in chat can become a short GitHub issue: the bot drafts it and hands over a prefilled link, once per topic, and the owner submits it. The Monday report ends with one line inviting that. The draft leaves out handles, names, and post text. A contributor's bot that changes this repo follows [skills/x-neighbours-maintain/SKILL.md](skills/x-neighbours-maintain/SKILL.md).
+A Grok Bot that runs this for its owner should follow [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md) after the first report. The first report is [skills/x-neighbours/FIRST_RUN.md](skills/x-neighbours/FIRST_RUN.md). [BOT.md](BOT.md) only points at those files. The getting-started skill points at that file. Any concern in chat can become a short GitHub issue: the bot drafts it and hands over a prefilled link, once per topic, and the owner submits it. The Monday report ends with one line inviting that. The draft leaves out handles, names, and post text. A contributor's bot that changes this repo follows [skills/x-neighbours-maintain/SKILL.md](skills/x-neighbours-maintain/SKILL.md).
 
 ## Version
 
@@ -169,8 +170,8 @@ These are not in the repo, because they are accounts and secrets:
 | `like_weight`, `reply_weight` | Quiet points. A reply or quote uses `reply_weight`. A like uses `like_weight`. They order Catch up and the picture. They are not printed on the report or the picture. Override with `--like-weight` and `--reply-weight` |
 | `exclude` | Handles left out, such as bots. `@grok` is the default |
 | `rings` | Rings on the picture, from 1 to 4. Default 3. The rings hold 8, then 14, then 20, then 26 people |
-| `trial_post_count` | How many of the latest original posts and quotes the trial report uses. Default 5. No day window. Replies are left out. The read budget is about 15 |
-| `first_run_days` | Not used by the trial report. An older config can still contain it |
+| `trial_post_count` | How many of the latest original posts and quotes the first report uses. Default 5. No day window. Replies are left out. The read budget is about 15 |
+| `first_run_days` | Not used by the first report. An older config can still contain it |
 | `items_per_user` | Reply and quote lines shown per person before `+N more`. Default 3 |
 | `show_names` | Display name under each avatar, with @username on the line below. @username alone when the account has no name |
 | `theme` | `midnight` (default), `light`, or `sunset` |
@@ -185,7 +186,7 @@ These are not in the repo, because they are accounts and secrets:
 
 Other flags: `--config`, `--data`, `--out`, `--now`, `--since`, `--days`, `--first-run`, `--trial-plan`, `--estimate-reads`, `--trial-post-count`, `--report-card`, `--rings`, `--top`, `--theme`, `--windows day,week`, `--report likes`, `--per-post`, `--per-day`, `--picture`, `--no-picture`, `--show-names`, `--no-image`, `--good-neighbours PATH`, `--state PATH`, `--timezone`, `--fresh-hours`, `--version`.
 
-A plain run writes the markdown report and the neighbours picture. `--first-run` is the trial report (`trial_post_count` latest originals and quotes). `--trial-plan` prints the reads for posts already saved. `--estimate-reads N` prints how many minutes those reads should take. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
+A plain run writes the markdown report and the neighbours picture. `--first-run` is the first report (`trial_post_count` latest originals and quotes). The header is `First report`. `--trial-plan` prints the reads for posts already saved. `--estimate-reads N` prints how many minutes those reads should take. `--report-card` adds the PNG card. `--days 14` is a custom period. `--no-picture` skips the image.
 
 ```bash
 python3 x_neighbours.py --now 2026-11-04T18:00:00Z --report likes
@@ -265,7 +266,7 @@ python3 x_neighbours.py \
   --first-run
 ```
 
-That writes `report_first.md` and `x_neighbours_first.png` (the picture above). The same data with a fictional list:
+That writes `report_first.md`, `report_first.canvas.tsx`, and `x_neighbours_first.png` (the picture above). The same data with a fictional list:
 
 ```bash
 python3 x_neighbours.py \
@@ -285,7 +286,7 @@ GitHub Actions runs `python3 -m unittest discover -s tests -v` and this offline 
 
 ## Privacy
 
-- `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `x_neighbours_*.png`, and a `good_neighbours.json`, `state.json`, `community.json`, or `global_neighbours.neighbours` copied into the repo root are gitignored. Leave them that way. The real list, the report clock, and community mode belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked. Public share files under `submissions/` are the exception, and they go through a pull request.
+- `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `report_*.canvas.tsx`, `report_*_page.json`, `x_neighbours_*.png`, and a `good_neighbours.json`, `state.json`, `community.json`, or `global_neighbours.neighbours` copied into the repo root are gitignored. Leave them that way. The real list, the report clock, and community mode belong in the bot's store, not in this repo. `examples/few/good_neighbours.json` is fictional and is the only copy that is tracked. Public share files under `submissions/` are the exception, and they go through a pull request.
 - Real avatars are downloaded from the `profile_image_url` values in the saved JSON into `.avatar_cache/` next to the output folder.
 - Do not commit a creator's config, raw responses, avatar cache, reports, or pictures, and do not open a pull request that contains them.
 - The sample dataset is the only account data in this repo, and it is not from X.

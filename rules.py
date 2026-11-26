@@ -4,8 +4,11 @@
 RULES.md is the explanation. This module is the copy the checker, the global
 builder, and the tests run. Change a number here and in RULES.md together.
 """
+import json
 import math
+import os
 import re
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 
 
@@ -54,7 +57,8 @@ OWNER_MIN_AGE_DAYS = 90
 MAINTAINER_WAIVER_LABEL = "maintainer-waiver"
 
 HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
-USER_ID_RE = re.compile(r"^[0-9]{1,25}$")
+# No leading zeros. "100" and "0100" must not count as two owners.
+USER_ID_RE = re.compile(r"^(?:0|[1-9][0-9]{0,24})$")
 CODE_RE = re.compile(r"^XN-[A-Z0-9]{8}$")
 PROOF_RE = re.compile(r"^[0-9]{1,25}$")
 TAG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,23})$")
@@ -62,8 +66,12 @@ SUBMISSION_RE = re.compile(
     r"^submissions/([0-9]{1,25})/(\d{4}-\d{2}-\d{2}T\d{6}Z)\.neighbours$"
 )
 STAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})Z$")
-LINK_RE = re.compile(r"(https?://|www\.|t\.co/|x\.com/)", re.IGNORECASE)
-MENTION_RE = re.compile(r"@[A-Za-z0-9_]")
+LINK_RE = re.compile(
+    r"(https?://|www\.|t\.co/|(?:x|twitter)\.com/)",
+    re.IGNORECASE,
+)
+# Fullwidth ＠ is the usual way to sneak a mention past a plain "@" check.
+MENTION_RE = re.compile(r"[@＠][A-Za-z0-9_]")
 FOLLOW_BARGAIN_RE = re.compile(
     r"follow[\s-]*for[\s-]*follow|\bf4f\b|follow[\s-]*back|followback"
     r"|i(?:'ll| will) follow|follow me",
@@ -134,12 +142,129 @@ def submission_relpath(user_id, when):
     return f"submissions/{user_id}/{file_stamp(when)}.neighbours"
 
 
-def period_days(start, end):
-    """Whole days covered by the period. An exact multiple stays exact."""
-    seconds = (parse_time(end) - parse_time(start)).total_seconds()
-    if seconds <= 0:
+def period_span(start, end):
+    """UTC length of a period. The end must be strictly later than the start."""
+    delta = parse_time(end) - parse_time(start)
+    if delta <= timedelta(0):
         raise ValueError("period ends before it starts")
+    return delta
+
+
+def period_within_bounds(start, end):
+    """True when the period spans 7 to 93 full days, inclusive.
+
+    A partial day does not round up into the minimum. Six days and 23 hours
+    is shorter than 7 days, and 93 days plus one second is longer than 93.
+    """
+    delta = period_span(start, end)
+    return timedelta(days=MIN_PERIOD_DAYS) <= delta <= timedelta(days=MAX_PERIOD_DAYS)
+
+
+def period_days(start, end):
+    """Whole days covered by the period. An exact multiple stays exact.
+
+    Used to scale min_score. The share checker uses period_within_bounds for
+    the 7-day and 93-day limits, so a short window cannot pass by rounding up.
+    """
+    seconds = period_span(start, end).total_seconds()
     return int(math.ceil(seconds / 86400 - 1e-9))
+
+
+def canonical_user_id(value):
+    """Numeric X id with no leading zeros, or "" when the id is not usable."""
+    text = str(value or "").strip()
+    if not USER_ID_RE.fullmatch(text):
+        return ""
+    return text
+
+
+def safe_branch(name):
+    """A git branch name safe to put in a URL or a ref. Empty when it is not."""
+    text = str(name or "").strip()
+    if not text or not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", text):
+        return ""
+    parts = text.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return ""
+    return text
+
+
+def checked_out_branch(repo="."):
+    """The branch named by .git/HEAD, or "" when HEAD is detached or missing."""
+    git_path = os.path.join(repo, ".git")
+    if os.path.isfile(git_path):
+        try:
+            with open(git_path, encoding="utf-8") as fh:
+                line = fh.read().strip()
+        except OSError:
+            return ""
+        if not line.startswith("gitdir:"):
+            return ""
+        git_path = line.split(":", 1)[1].strip()
+        if not os.path.isabs(git_path):
+            git_path = os.path.normpath(os.path.join(repo, git_path))
+    head = os.path.join(git_path, "HEAD")
+    try:
+        with open(head, encoding="utf-8") as fh:
+            text = fh.read().strip()
+    except OSError:
+        return ""
+    prefix = "ref: refs/heads/"
+    if not text.startswith(prefix):
+        return ""
+    return safe_branch(text[len(prefix):])
+
+
+def share_branch_from_config(path):
+    """share_branch from a bot config.json. Blank when the file or key is absent."""
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(doc, dict):
+        return ""
+    return str(doc.get("share_branch") or "").strip()
+
+
+def resolve_branch(explicit="", config_branch="", repo="."):
+    """Branch for raw URLs and share pull requests.
+
+    An explicit --base wins, then share_branch in config, then the checked-out
+    branch. main is the fallback when none of those is a usable name.
+    """
+    for candidate in (explicit, config_branch, checked_out_branch(repo)):
+        safe = safe_branch(candidate)
+        if safe:
+            return safe
+    return "main"
+
+
+def raw_file_url(branch, relpath):
+    """raw.githubusercontent.com URL for one file on a branch."""
+    chosen = safe_branch(branch) or "main"
+    root = REPO_URL.replace("https://github.com", "https://raw.githubusercontent.com")
+    quoted = urllib.parse.quote(chosen, safe="/")
+    return f"{root}/{quoted}/{relpath}"
+
+
+def clean_relpath(path):
+    """Repo-relative path with no traversal.
+
+    A leading ./ is removed. Absolute paths, NUL bytes, empty segments, and
+    any "." or ".." segment return "" so they cannot match or be opened.
+    """
+    text = str(path or "").strip().replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    if not text or text.startswith("/") or "\x00" in text:
+        return ""
+    parts = text.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return ""
+    return "/".join(parts)
 
 
 def min_score(days):
@@ -256,9 +381,17 @@ def submission_allowed(now, previous, interval_days=SUBMISSION_INTERVAL_DAYS):
 
 
 def rank_key(row):
-    """Highest score, then replies plus quotes, then user id."""
+    """Highest score, then replies plus quotes, then numeric user id.
+
+    User ids are numbers. "99" stays ahead of "100"; a text sort would not.
+    """
     conversation = int(row["replies"]) + int(row["quotes"])
-    return (-int(row["score"]), -conversation, str(row["user_id"]))
+    user_id = str(row["user_id"])
+    try:
+        numeric = (0, int(user_id))
+    except ValueError:
+        numeric = (1, user_id)
+    return (-int(row["score"]), -conversation, numeric)
 
 
 def select_neighbours(rows, days, owner_id, owner_handle="", drop_ids=None,
@@ -303,12 +436,23 @@ def select_neighbours(rows, days, owner_id, owner_handle="", drop_ids=None,
             reject(row, "duplicate")
             continue
         seen.add(user_id)
-        interactions = {
-            "replies": int(row.get("replies") or 0),
-            "quotes": int(row.get("quotes") or 0),
-            "reposts": int(row.get("reposts") or 0),
-            "likes": int(row.get("likes") or 0),
-        }
+
+        def one_count(key):
+            if key not in row or row[key] is None:
+                raise ValueError(key)
+            return row[key]
+
+        try:
+            counts = counts_of({
+                "replies": one_count("replies"),
+                "quotes": one_count("quotes"),
+                "reposts": one_count("reposts"),
+                "likes": one_count("likes"),
+            })
+        except ValueError:
+            reject(row, "counts")
+            continue
+        interactions = counts
         ok, reason = eligibility(interactions, days)
         if not ok:
             reject(row, reason)

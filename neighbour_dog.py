@@ -22,34 +22,93 @@ import urllib.request
 import rules
 
 
+def _id_set(group):
+    found = set()
+    for item in group or []:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            found.add(text)
+    return found
+
+
 def detect_boost_ring(lists):
-    """True when two lists mostly name each other and almost nobody else.
+    """True when accounts mostly appear on each other's lists and almost nowhere else.
 
     Each list is one owner's recommended user ids. A pair is a ring when both
     lists have at least three accounts, at least 80 percent of the smaller
-    list is shared, and none of those shared accounts appear on a third list.
-    One sighting is a flag, not an automatic reject.
+    list is shared, and none of those shared accounts appear on a list outside
+    that pair. A larger closed group is also a ring: every list in the group
+    has at least three accounts, and at least 80 percent of each list also
+    appears on the other lists in the group. One sighting is a flag, not a reject.
+    Lists shorter than three accounts are not flagged.
     """
     cleaned = []
     for group in lists or []:
-        ids = {str(item) for item in group if str(item)}
+        ids = _id_set(group)
         if ids:
             cleaned.append(ids)
-    for left in range(len(cleaned)):
-        for right in range(left + 1, len(cleaned)):
-            first, second = cleaned[left], cleaned[right]
-            if len(first) < 3 or len(second) < 3:
+    count = len(cleaned)
+    if count < 2:
+        return False
+
+    def pair_is_ring(left, right):
+        first, second = cleaned[left], cleaned[right]
+        if len(first) < 3 or len(second) < 3:
+            return False
+        shared = first & second
+        if not shared or len(shared) / min(len(first), len(second)) < 0.8:
+            return False
+        elsewhere = set()
+        for index, group in enumerate(cleaned):
+            if index in (left, right):
                 continue
-            shared = first & second
-            if len(shared) / min(len(first), len(second)) < 0.8:
-                continue
-            elsewhere = set()
-            for index, group in enumerate(cleaned):
-                if index in (left, right):
-                    continue
-                elsewhere |= group
-            if shared and shared.isdisjoint(elsewhere):
+            elsewhere |= group
+        return shared.isdisjoint(elsewhere)
+
+    for left in range(count):
+        for right in range(left + 1, count):
+            if pair_is_ring(left, right):
                 return True
+
+    parent = list(range(count))
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left, right):
+        root_left, root_right = find(left), find(right)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    for left in range(count):
+        for right in range(left + 1, count):
+            if cleaned[left] & cleaned[right]:
+                union(left, right)
+
+    groups = {}
+    for index in range(count):
+        groups.setdefault(find(index), []).append(index)
+
+    for members in groups.values():
+        if len(members) < 2 or any(len(cleaned[index]) < 3 for index in members):
+            continue
+        closed = True
+        for index in members:
+            others = set()
+            for other in members:
+                if other != index:
+                    others |= cleaned[other]
+            overlap = cleaned[index] & others
+            if len(overlap) / len(cleaned[index]) < 0.8:
+                closed = False
+                break
+        if closed:
+            return True
     return False
 
 

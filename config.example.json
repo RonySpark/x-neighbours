@@ -16,5 +16,5 @@
   "per_post": false,
   "per_day": false,
   "timezone": "",
-  "community": false
+  "share_branch": ""
 }

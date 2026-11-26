@@ -31,8 +31,9 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
+import community
 import rules
 import version as version_mod
 
@@ -96,11 +97,17 @@ def load_build(repo):
     return doc if isinstance(doc, dict) else {}
 
 
-def waiver_path(doc):
+def waiver_raw(doc):
+    """The waiver path as written in build.json, before it is checked."""
     waiver = doc.get("founding_waiver") if isinstance(doc, dict) else None
     if not isinstance(waiver, dict):
         return ""
-    return str(waiver.get("submission") or "").strip().lstrip("./")
+    return str(waiver.get("submission") or "").strip()
+
+
+def waiver_path(doc):
+    """Exact safe waiver path. Unsafe or empty config matches nothing."""
+    return rules.clean_relpath(waiver_raw(doc))
 
 
 def period_bounds(now, days):
@@ -208,13 +215,13 @@ def normalize_counts(payload):
             "user_id": str(item.get("user_id") or item.get("id") or ""),
             "handle": str(item.get("handle") or item.get("username") or "").lstrip("@"),
             "name": item.get("name") or "",
-            "replies": int(interactions.get("replies") or 0),
-            "quotes": int(interactions.get("quotes") or 0),
-            "reposts": int(interactions.get("reposts") or 0),
-            "likes": int(interactions.get("likes") or 0),
+        "replies": interactions.get("replies") if interactions.get("replies") is not None else 0,
+        "quotes": interactions.get("quotes") if interactions.get("quotes") is not None else 0,
+        "reposts": interactions.get("reposts") if interactions.get("reposts") is not None else 0,
+        "likes": interactions.get("likes") if interactions.get("likes") is not None else 0,
             "first_seen": item.get("first_seen") or "",
             "last_seen": item.get("last_seen") or "",
-            "note": item.get("note") or "",
+            "note": item.get("note") or None,
             "tags": item.get("tags") or [],
         })
     return rows
@@ -264,10 +271,14 @@ def _require_object(report, value, label):
 
 
 def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
-                      banned=None, waiver=None):
-    """Append errors for one submission document. relpath is repo-relative."""
+                      banned=None, waiver=None, now=None):
+    """Append errors for one submission document. relpath is repo-relative.
+
+    now is the clock for future timestamps. It defaults to the current UTC time.
+    """
     opted_out = set(opted_out or [])
     banned = set(banned or [])
+    clock = datetime.now(timezone.utc) if now is None else rules.parse_time(now)
     if not isinstance(doc, dict):
         report.add("schema", "submission must be a JSON object")
         return
@@ -288,23 +299,28 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
         report.add("schema", "unsupported submission version")
 
     match = rules.SUBMISSION_RE.fullmatch(relpath or "")
-    waiver_rel = str(waiver or "").strip().lstrip("./")
-    is_waiver = bool(waiver_rel) and relpath == waiver_rel
-    if not match and not is_waiver:
+    # The waiver names one normal submissions file. It does not change that
+    # file's owner. global_build.py is what writes the neutral credit.
+    waiver_rel = rules.clean_relpath(waiver)
+    if waiver_rel and rules.clean_relpath(relpath) == waiver_rel and not match:
+        report.add(
+            "path",
+            "the founding waiver must be a normal submissions/<user id>/<timestamp>.neighbours file",
+        )
+    if not match:
         report.add("path", "path must be submissions/<user id>/<timestamp>.neighbours")
         owner_from_path = ""
         stamp = ""
     else:
-        if match:
-            owner_from_path, stamp = match.group(1), match.group(2)
-        else:
-            owner_from_path, stamp = "", ""
+        owner_from_path, stamp = match.group(1), match.group(2)
 
     try:
         submitted = rules.iso(doc.get("submitted_at"))
     except (TypeError, ValueError):
         report.add("schema", "submitted_at must be a UTC timestamp")
         submitted = ""
+    if submitted and rules.parse_time(submitted) > clock:
+        report.add("future", "submitted_at is in the future")
     if match and submitted:
         try:
             stamped = rules.stamp_to_iso(stamp)
@@ -321,17 +337,10 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
     owner_keys = set(owner) - {"user_id", "handle", "name"}
     if owner_keys:
         report.add("schema", "owner has unexpected fields")
-    if is_waiver:
-        if owner_id != rules.FOUNDING_OWNER_ID or handle != rules.FOUNDING_OWNER_HANDLE:
-            report.add(
-                "waiver",
-                "the waived founding file must use the neutral founding identity",
-            )
-    else:
-        if not rules.USER_ID_RE.fullmatch(owner_id):
-            report.add("schema", "owner user_id must be the numeric X id")
-        if owner_from_path and owner_id != owner_from_path:
-            report.add("path", "folder name must be the owner user id")
+    if not rules.USER_ID_RE.fullmatch(owner_id):
+        report.add("schema", "owner user_id must be the numeric X id")
+    if owner_from_path and owner_id != owner_from_path:
+        report.add("path", "folder name must be the owner user id")
     if not rules.HANDLE_RE.fullmatch(handle):
         report.add("schema", "owner handle must be an X handle")
     if owner_id in banned:
@@ -363,15 +372,23 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
     if not _require_object(report, period, "period"):
         period = {}
     try:
-        days = rules.period_days(period.get("from"), period.get("to"))
+        start_at = rules.parse_time(period.get("from"))
+        end_at = rules.parse_time(period.get("to"))
+        if end_at <= start_at:
+            raise ValueError("period ends before it starts")
+        days = rules.period_days(start_at, end_at)
     except (TypeError, ValueError):
         report.add("schema", "period from and to must be UTC timestamps")
         days = None
-    if days is not None and (days < rules.MIN_PERIOD_DAYS or days > rules.MAX_PERIOD_DAYS):
+        start_at = None
+        end_at = None
+    if days is not None and not rules.period_within_bounds(start_at, end_at):
         report.add(
             "schema",
             f"period must cover {rules.MIN_PERIOD_DAYS} to {rules.MAX_PERIOD_DAYS} days",
         )
+    if start_at is not None and (start_at > clock or end_at > clock):
+        report.add("future", "period must not extend into the future")
 
     if previous_at and submitted:
         allowed, nxt = rules.submission_allowed(submitted, previous_at)
@@ -422,9 +439,12 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
                 report.add("eligibility", f"{row_handle or user_id} does not meet the {reason} rule")
         for field in ("first_seen", "last_seen"):
             try:
-                rules.parse_time(row.get(field))
+                seen_at = rules.parse_time(row.get(field))
             except (TypeError, ValueError):
                 report.add("schema", f"{where} {field} must be a UTC timestamp")
+            else:
+                if seen_at > clock:
+                    report.add("future", f"{where} {field} is in the future")
         problem = rules.note_problem(row["note"]) if "note" in row else ""
         if problem:
             report.add("note", f"{where} {problem}")
@@ -441,12 +461,64 @@ def validate_document(doc, relpath, report, previous_at=None, opted_out=None,
         report.add("schema", "generator.template_version must be major.minor.patch")
 
 
+def head_submission_names(repo, owner_id):
+    """File names committed on HEAD for this owner.
+
+    None when this directory is not a git checkout with a HEAD. An empty list
+    means HEAD exists and this owner has no committed submission.
+    """
+    folder_rel = f"submissions/{owner_id}"
+    result = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", folder_rel],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    prefix = folder_rel + "/"
+    names = []
+    for line in result.stdout.splitlines():
+        path = line.strip().replace("\\", "/")
+        if path.startswith(prefix) and path.endswith(".neighbours"):
+            names.append(path[len(prefix):])
+    return names
+
+
+def _latest_submitted(pairs):
+    """pairs are (relpath, doc-or-None). Returns the latest ISO time, or None."""
+    latest = None
+    for relpath, doc in pairs:
+        if not isinstance(doc, dict):
+            continue
+        try:
+            when = rules.parse_time(doc.get("submitted_at"))
+        except (TypeError, ValueError):
+            continue
+        if latest is None or when > latest:
+            latest = when
+    return rules.iso(latest) if latest else None
+
+
 def previous_submission_at(repo, owner_id, ignore_relpath=""):
-    """Latest submitted_at already stored for this owner, ignoring one new file."""
+    """Latest committed submitted_at for this owner, ignoring one new file.
+
+    In a git checkout only files on HEAD count. An uncommitted draft in the
+    working tree does not start the 7-day clock. A directory that is not a
+    git checkout falls back to the files on disk, which is what the tests use.
+    """
+    names = head_submission_names(repo, owner_id)
+    if names is not None:
+        pairs = []
+        for name in names:
+            relpath = f"submissions/{owner_id}/{name}"
+            if relpath == ignore_relpath:
+                continue
+            pairs.append((relpath, git_show(repo, "HEAD", relpath)))
+        return _latest_submitted(pairs)
+
     folder = os.path.join(repo, "submissions", str(owner_id))
     if not os.path.isdir(folder):
         return None
-    latest = None
+    pairs = []
     for name in os.listdir(folder):
         relpath = f"submissions/{owner_id}/{name}"
         if relpath == ignore_relpath or not name.endswith(".neighbours"):
@@ -454,15 +526,13 @@ def previous_submission_at(repo, owner_id, ignore_relpath=""):
         path = os.path.join(folder, name)
         try:
             doc = read_json(path)
-            when = rules.parse_time(doc.get("submitted_at"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        except (OSError, json.JSONDecodeError):
             continue
-        if latest is None or when > latest:
-            latest = when
-    return rules.iso(latest) if latest else None
+        pairs.append((relpath, doc))
+    return _latest_submitted(pairs)
 
 
-def validate_file(path, repo, relpath=None):
+def validate_file(path, repo, relpath=None, now=None):
     report = Report()
     if relpath is None:
         relpath = os.path.relpath(path, repo).replace(os.sep, "/")
@@ -487,7 +557,7 @@ def validate_file(path, repo, relpath=None):
     validate_document(
         doc, relpath, report, previous_at=previous,
         opted_out=opted_out_ids(repo), banned=banned_owner_ids(repo),
-        waiver=waiver_path(build),
+        waiver=waiver_path(build), now=now,
     )
     return report
 
@@ -539,10 +609,20 @@ def validate_changes(repo, changes, labels=None, base_waiver=None, head_waiver=N
         else:
             other.append(change)
 
-    head = head_waiver if head_waiver is not None else waiver_path(load_build(repo))
+    if head_waiver is None:
+        head_waiver = waiver_raw(load_build(repo))
     if base_waiver is None:
-        base_waiver = head
-    waiver_changed = str(base_waiver or "") != str(head or "")
+        base_waiver = head_waiver
+    base_text = str(base_waiver or "").strip()
+    head_text = str(head_waiver or "").strip()
+    waiver_changed = base_text != head_text
+    for raw in (base_text, head_text):
+        if raw and not rules.clean_relpath(raw):
+            report.add(
+                "waiver",
+                "founding waiver path must be an exact path inside the repository",
+            )
+            break
     if waiver_changed and rules.MAINTAINER_WAIVER_LABEL not in labels:
         report.add(
             "waiver",
@@ -620,11 +700,12 @@ def default_transport(method, url, payload, headers):
 
 
 def create_pull_request(token, relpath, content, title, body, repo=rules.REPO_SLUG,
-                        transport=None):
+                        transport=None, base=""):
     """Open a pull request that adds one submission file. Does not follow or post.
 
-    Returns a dict. opened is true only when GitHub accepted the pull request.
-    The token is never included in the result.
+    base is the branch the pull request merges into. Blank asks GitHub for
+    the repository default, which is main for this repo. Pass v3 to target
+    that branch instead. The token is never included in the result.
     """
     if not token:
         return {
@@ -653,8 +734,10 @@ def create_pull_request(token, relpath, content, title, body, repo=rules.REPO_SL
         return parsed
 
     try:
-        meta = call("GET", api)
-        branch = meta.get("default_branch") or "main"
+        branch = rules.safe_branch(base)
+        if not branch:
+            meta = call("GET", api)
+            branch = rules.safe_branch(meta.get("default_branch")) or "main"
         ref = call("GET", f"{api}/git/ref/heads/{branch}")
         base_sha = ref["object"]["sha"]
         commit = call("GET", f"{api}/git/commits/{base_sha}")
@@ -706,6 +789,30 @@ def create_pull_request(token, relpath, content, title, body, repo=rules.REPO_SL
         "url": pull.get("html_url") or "",
         "number": pull.get("number"),
         "path": relpath,
+        "base": branch,
+    }
+
+
+def community_required(path):
+    """Sharing writes a public file. Individual mode cannot prepare one."""
+    if not path:
+        raise ValueError("pass --community-file; individual mode does not share")
+    state = community.load(path)
+    if not state.get("community"):
+        raise ValueError("community mode is off; individual mode does not share")
+
+
+def summarize_dropped(dropped, limit=8):
+    """Counts by reason, plus a short sample. The full list is not printed."""
+    rows = [item for item in (dropped or []) if isinstance(item, dict)]
+    by_reason = {}
+    for item in rows:
+        reason = str(item.get("reason") or "other")
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+    return {
+        "count": len(rows),
+        "by_reason": by_reason,
+        "examples": rows[:limit],
     }
 
 
@@ -741,6 +848,7 @@ def main():
     prepare.add_argument("--tag", action="append", default=[])
     prepare.add_argument("--exclude", action="append", default=[])
     prepare.add_argument("--code", help="verification code; generated when omitted")
+    prepare.add_argument("--community-file", required=True, help="community.json; sharing stays off until the owner joins")
     prepare.add_argument("--out", required=True)
     prepare.add_argument("--repo", default=".")
 
@@ -758,6 +866,8 @@ def main():
     from_data.add_argument("--days", type=int, default=rules.DEFAULT_PERIOD_DAYS)
     from_data.add_argument("--drop", action="append", default=[])
     from_data.add_argument("--exclude", action="append", default=[])
+    from_data.add_argument("--code", help="reuse this verification code instead of minting a new one")
+    from_data.add_argument("--community-file", required=True, help="community.json; sharing stays off until the owner joins")
     from_data.add_argument("--out", required=True)
     from_data.add_argument("--repo", default=".")
 
@@ -773,6 +883,9 @@ def main():
     opener = sub.add_parser("open-pr", help="open a pull request when a token is configured")
     opener.add_argument("--file", required=True)
     opener.add_argument("--repo-slug", default=rules.REPO_SLUG)
+    opener.add_argument("--base", default="", help="branch the pull request targets; default is the checkout, then main")
+    opener.add_argument("--config", default="", help="config.json; share_branch overrides the checkout")
+    opener.add_argument("--repo", default=".")
 
     args = parser.parse_args()
     try:
@@ -798,12 +911,13 @@ def run(args):
         })
         return 0 if allowed else 2
     if args.cmd in ("prepare", "from-data"):
+        community_required(args.community_file)
         if args.cmd == "from-data":
             rows = counts_from_data(
                 args.data, args.owner_id, args.now, args.days, exclude=args.exclude)
         else:
             rows = normalize_counts(read_json(args.counts))
-        code = args.code if args.cmd == "prepare" and args.code else new_code()
+        code = str(args.code or "").strip() or new_code()
         notes = parse_assignments(getattr(args, "note", None))
         tags = parse_tag_assignments(getattr(args, "tag", None))
         document, dropped, relpath = build_document(
@@ -822,7 +936,7 @@ def run(args):
             "code": code,
             "post_text": post,
             "neighbours": len(document["neighbours"]),
-            "dropped": dropped,
+            "dropped": summarize_dropped(dropped),
             "proof_post_id": "",
         })
         return 0
@@ -849,7 +963,7 @@ def run(args):
         head_doc = load_build(args.repo)
         payload = validate_changes(
             args.repo, changes, labels=args.labels.split(","),
-            base_waiver=waiver_path(base_doc), head_waiver=waiver_path(head_doc),
+            base_waiver=waiver_raw(base_doc), head_waiver=waiver_raw(head_doc),
         )
         emit(payload)
         return 0 if payload["ok"] else 1
@@ -861,11 +975,14 @@ def run(args):
         with open(args.file, encoding="utf-8") as fh:
             content = fh.read()
         token = os.environ.get("X_NEIGHBOURS_GITHUB_TOKEN") or ""
+        base = rules.resolve_branch(
+            args.base, rules.share_branch_from_config(args.config), args.repo)
         result = create_pull_request(
             token, relpath, content,
             title=f"Share neighbours from {handle}",
             body=pull_body(handle),
             repo=args.repo_slug,
+            base=base,
         )
         emit(result)
         return 0 if result.get("opened") else 2

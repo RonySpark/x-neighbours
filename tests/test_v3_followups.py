@@ -208,6 +208,56 @@ class ShareGuardTest(unittest.TestCase):
         finally:
             shutil.rmtree(folder)
 
+    def test_draft_validates_on_content_until_it_is_placed_under_submissions(self):
+        repo = tempfile.mkdtemp()
+        store = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(repo, "global"))
+            share.write_json(
+                os.path.join(repo, "global", "build.json"),
+                {"founding_waiver": {"submission": ""}})
+            document, _dropped, relpath = share.build_document(
+                [person()], "100", "example_owner", NOW, 90, "XN-ABCD2345", "555001")
+            clock = "2026-11-25T18:00:00Z"
+            draft = os.path.join(store, "share-draft.neighbours")
+            share.write_json(draft, document)
+            outside = share.validate_file(draft, repo, now=clock)
+            self.assertTrue(outside.ok, outside.errors)
+            self.assertFalse(any(item["code"] == "path" for item in outside.errors))
+
+            working = os.path.join(repo, "share-draft.neighbours")
+            share.write_json(working, document)
+            in_repo = share.validate_file(working, repo, now=clock)
+            self.assertTrue(in_repo.ok, in_repo.errors)
+            self.assertFalse(any(item["code"] == "path" for item in in_repo.errors))
+
+            missing = json.loads(json.dumps(document))
+            missing["verification"]["proof_post_id"] = ""
+            share.write_json(draft, missing)
+            bad = share.validate_file(draft, repo, now=clock)
+            self.assertFalse(bad.ok)
+            self.assertTrue(any(item["code"] == "proof" for item in bad.errors))
+            self.assertFalse(any(item["code"] == "path" for item in bad.errors))
+
+            share.write_json(draft, document)
+            with redirect_stdout(io.StringIO()) as buf:
+                code = share.run(namespace(cmd="validate-file", path=draft, repo=repo))
+            self.assertEqual(code, 0, buf.getvalue())
+            self.assertTrue(json.loads(buf.getvalue())["ok"])
+
+            share.write_json(os.path.join(repo, relpath), document)
+            placed = share.validate_file(os.path.join(repo, relpath), repo, now=clock)
+            self.assertTrue(placed.ok, placed.errors)
+
+            wrong = os.path.join(repo, "submissions", "100", "not-a-stamp.neighbours")
+            os.makedirs(os.path.dirname(wrong), exist_ok=True)
+            share.write_json(wrong, document)
+            path_report = share.validate_file(wrong, repo, now=clock)
+            self.assertTrue(any(item["code"] == "path" for item in path_report.errors))
+        finally:
+            shutil.rmtree(repo)
+            shutil.rmtree(store)
+
     def test_dropped_output_is_a_summary(self):
         rows = [{"user_id": str(i), "handle": f"h{i}", "reason": "score"} for i in range(20)]
         rows.append({"user_id": "x", "handle": "y", "reason": "conversation"})
@@ -310,6 +360,9 @@ class DocsAndIgnoreTest(unittest.TestCase):
         self.assertIn("submissions/<user id>/<timestamp>.neighbours", share_skill)
         self.assertIn("--code", share_skill)
         self.assertIn("--community-file", share_skill)
+        self.assertIn("draft's contents", share_skill)
+        self.assertIn("Where the draft is saved", share_skill)
+        self.assertIn("path rule is enforced only when the file is placed", share_skill)
         self.assertIn("not Monday", community_skill)
         self.assertIn("--base v3", community_skill)
         self.assertIn("requirements.txt` changed", community_skill)

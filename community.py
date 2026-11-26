@@ -2,8 +2,9 @@
 """Opt-in community mode for one owner's bot.
 
 The flag lives in the bot store, next to good_neighbours.json. It is never
-committed. Individual mode is the default: no version check, no global list,
-no share, no picture-tag reminder.
+committed. Individual mode is the default: no global list, no share, no
+picture-tag reminder. The Monday version check for every bot lives in
+version.py. check-update here still does nothing unless community mode is on.
 
   python3 community.py --file PATH status
   python3 community.py --file PATH offer
@@ -33,11 +34,11 @@ import version as version_mod
 
 
 JOIN_PROMPT = (
-    "Community mode is optional. If you join, this bot checks once a week "
-    "for a new version and asks before upgrading, can download a public "
-    "recommendations list, and can help you share neighbours who already "
+    "Community mode is optional. If you join, this bot can download a public "
+    "recommendations list and can help you share neighbours who already "
     "talk with you. It still does not post or follow anyone. Your private "
-    "reports stay on this bot either way. Join the community?"
+    "reports stay on this bot either way. The Monday update check already "
+    "runs either way. Join the community?"
 )
 PICTURE_REMINDER = (
     f"When you post this picture, include @{rules.PICTURE_TAG} so it can be "

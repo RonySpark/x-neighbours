@@ -3,7 +3,8 @@ name: x-neighbours
 description: >-
   Show who replied, quoted, liked, and reposted the owner, plus who to catch
   up with. Use when the owner asks for X Neighbours, a daily or weekly
-  report, the neighbours picture, or their good neighbours list.
+  report, the neighbours picture, their good neighbours list, or the Monday
+  update check.
 ---
 
 # X Neighbours — bot runbook
@@ -20,7 +21,7 @@ You do the X reads. `x_neighbours.py` only reads JSON you saved. Follow every ru
 - This run is **read-only**. Never follow, unfollow, like, unlike, repost, bookmark, post, reply, or DM. Never open a GitHub issue yourself. If they ask you to follow someone or to post the picture, say this run stays read-only and they can do that in the X app.
 - Leave bot accounts out. `@grok` is already in `exclude`. They can name other handles to skip anytime.
 - Never commit user data. Do not commit or push `config.json`, `data/`, `.avatar_cache/`, `report_*.md`, `report_*.png`, `report_*.canvas.tsx`, `report_*_page.json`, `x_neighbours_*.png`, `good_neighbours.json`, `state.json`, `community.json`, or `global_neighbours.neighbours`. Do not open a pull request with those files. Do not run `git add .`. For a normal run, commit nothing. `git pull` is fine when the owner asked to upgrade: those paths are gitignored. The good neighbours list, the report clock, and community mode live in this bot's own store, outside the repo.
-- Community mode is off until the owner opts in. The steps are in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md). Individual mode does not check `versions/`, does not download the global list, does not share, and does not mention `@SkyXFunNext`.
+- Community mode is off until the owner opts in. The steps are in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md). Individual mode does not download the global list, does not share, and does not mention `@SkyXFunNext`. Every bot runs the Monday update check, community mode on or off.
 - A community share is the only time you open a GitHub pull request, and only for one submission file, and only by [skills/x-neighbours-share/SKILL.md](../x-neighbours-share/SKILL.md). You still never open a GitHub issue yourself. You still never post, follow, or repost on X.
 - Stay on this task. Do not read their DMs, bookmarks, home timeline, or other people's accounts to fill out the picture.
 - If the X tools are missing, ask the owner to connect X in this chat. Do not ask for a password, API key, or bearer token, and do not open x.com to log them in.
@@ -29,24 +30,44 @@ Weights are a quiet setting. The meaning of `like_weight` and `reply_weight` liv
 
 ## Upgrading
 
-An already-installed bot updates the clone it already has. Leave `config.json`, `data/`, and the bot store as they are. Do not pull on a schedule.
+An already-installed bot updates the clone it already has. Leave `config.json`, `data/`, and the bot store as they are. Do not pull on a daily schedule. The only scheduled upgrade is the Monday update check, and it pulls only after the owner says yes on that check.
 
-Individual mode does not check `versions/` and does not download the global list. If the owner asks to update, follow the steps below. Community mode does not use these steps until the owner says yes on the Monday check. That check is in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md).
+User data stays put: `config.json`, `data/`, the good neighbours file, the report clock in `state.json`, `community.json`, and `global_neighbours.neighbours`.
+
+### Bridge from an older bot
+
+Do this at the start of every run, before any X read and before any pull. Bots installed before this layout pull the clone from their old daily step. The first run on the new code has to notice.
+
+```bash
+python3 version.py --bridge --state <state path>
+```
+
+The recorded version lives in `state.json` as `bot_version`. An older bot has a report clock and no `bot_version`.
+
+- If `show` is false, say nothing about the version and continue the run.
+- If `show` is true, send `text` once. That is the release note: the bullets for the versions this bot moved across. Do not send it again on a later run. The command records that it was shown.
+- If `update_routines` is true, change the routines to this runbook. Remove the daily `git pull` step. Add the Monday update check below. An on-request owner still gets that check, and still gets no report routine. Then send `owner_line` and nothing else about the change. That line is one sentence.
+
+A new bot has no report clock yet. The bridge does not show notes and does not rewrite routines. The first report records the running version so a later run does not treat that bot as an upgrade.
+
+### When the owner asks to update now
+
+Skip the Monday wait only when they asked. Still do not pull on your own.
 
 1. From the clone, run `python3 version.py` and keep the line.
 2. `git pull --ff-only`. When `requirements.txt` changed, run `python3 -m pip install -r requirements.txt`.
-3. Run `python3 version.py` again. When the line changed, read `CHANGELOG.md` and tell the owner the new version in one line.
+3. Run `python3 version.py` again. When the line changed, run `python3 version.py --notes <old> <new>`, send those bullets, then `python3 version.py --ack --state <state path>` so the bridge does not show them again. The longer history is in `CHANGELOG.md`. The owner sees the short bullets.
 4. Leave the good neighbours file, `state.json`, `community.json`, and `global_neighbours.neighbours` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
 
 ## First run
 
 The first report is a short demo. Read [FIRST_RUN.md](FIRST_RUN.md) and follow that file only. Do not read the rest of this runbook to produce it. The getting-started skill points at the same file. You run the first report yourself. Do not hand it to a subagent.
 
-After the owner picks a daily report, a weekly report, or on-request only, later reports follow this file. Do not create both routines during the first report. Do not offer community mode during the first report.
+After the owner picks a daily report, a weekly report, or on-request only, later reports follow this file. Create the Monday update check with that choice, including on-request. Do not create both report routines during the first report. Do not offer community mode during the first report.
 
 ## Each run
 
-Before the first X read of any report (daily, weekly, or on request), count the reads you plan to make and run `python3 x_neighbours.py --estimate-reads <N>`. Send the `message` field to the owner. It says how many minutes the report should take, that they don't need to wait in the chat, and that they will get a notification when it is ready. Then fetch. Deliver the report when it is done, as “How to send a report” says: a Page, then one short chat message. The estimate is the only message you send before the fetches.
+Before the first X read of any report (daily, weekly, or on request), run the bridge under Upgrading. Then count the reads you plan to make and run `python3 x_neighbours.py --estimate-reads <N>`. Send the `message` field to the owner. It says how many minutes the report should take, that they don't need to wait in the chat, and that they will get a notification when it is ready. Then fetch. Deliver the report when it is done, as “How to send a report” says: a Page, then one short chat message. The estimate is the only message you send before the fetches.
 
 A manual run can fetch one window in a single pass. The daily and Monday routines below split the work so Monday reuses that morning's files. Work in the clone. Pick a UTC timestamp `T` when you start fetching. `T` is the actual current UTC time (`date -u +%Y-%m-%dT%H:%M:%SZ`). Pass that as `--now`. Do not reuse a timestamp from an earlier run, from `state.json`, or from a sample such as `2026-11-04T18:00:00Z` (that value is only a shape example). What's new does not age posts from `--now`; a stale `--now` still shifts the Flowers and Replies window.
 
@@ -251,13 +272,13 @@ Profile photos are not drawn beside names. A Page does not fetch a web image, an
 
 ## Routines
 
-Create a routine only after the first report, and only the one the owner picks. Daily is every day at 9:00. Weekly is Mondays at 9:00. On-request creates neither. They can add the other later by asking. Tell them the time can be changed.
+Create a report routine only after the first report, and only the one the owner picks. Daily is every day at 9:00. Weekly is Mondays at 9:00. On-request creates no report routine. Every choice also creates the Monday update check. They can add the other report later by asking. Tell them the time can be changed.
 
-Both run at 9:00 AM in the owner's timezone. Count every X call from both toward the same cap: about 30 a minute and 1,000 a day. On Monday, run the daily job first, then the weekly job, and do not fetch the last 24 hours twice.
+Both report routines run at 9:00 AM in the owner's timezone. Count every X call from both toward the same cap: about 30 a minute and 1,000 a day. On Monday, run the daily job first, then the weekly job, and do not fetch the last 24 hours twice. The Monday update check runs after those reports and does not fetch X.
 
 ### Every day
 
-1. Do not `git pull` on a schedule. Leave `config.json` and `data/` uncommitted. An owner who asks to update in individual mode follows “Upgrading”. Community mode checks on Monday and pulls only after they say yes.
+1. Do not `git pull`. Do not download `versions/`. The Monday update check is the only scheduled upgrade, and it runs with community mode off or on. Leave `config.json` and `data/` uncommitted. The bridge under Upgrading already ran at the start of this run.
 2. Do not refresh followers or following.
 3. Pick `T`. `START` is `T` minus 24 hours.
 4. Fetch posts and mentions from `START`. Save them as `posts_day_1`, `posts_day_2`, … and `mentions_day_1`, ….
@@ -278,9 +299,58 @@ If today's `posts_day_1.json` is missing, do the daily run first.
 4. If that span is missing, fetch it once: `get_users_posts` and `get_users_mentions` with `start_time` of `T` minus 7 days and `end_time` of `T` minus 24 hours. Save as `posts_week_1`, … and `mentions_week_1`, …. Then the same 3-or-more rule for likes, reposts, and quotes. Refresh `latest_<userid>.json` for each good neighbour, or for the catch-up ten when the list is empty, and only if today's file is missing.
 5. Run `python3 x_neighbours.py --now <T> --windows week --good-neighbours <path> --state <state path>`. Do not send the ⭐ Add card on this report.
 6. Send the report with “How to send a report”: one Page titled with the period, then a short chat message (`headline` and the Page link, with `x_neighbours_week.png` in that message's `images`). Do not post it. Do not send a report card unless they asked for `--report-card`. Do not send the ⭐ Add card. After that message, add one line and nothing else: “Anything you'd change about X Neighbours? Tell me and I'll turn it into a feedback link.” That line is `feedback_line` in the script output. Do not fetch anything for it.
-7. If community mode is on, run the Monday check in the community skill (ask before any upgrade, then save the global list). If it is off, do not fetch `versions/` or the global file.
+7. Do not check versions here and do not download the global list here. That is the Monday update check, which runs after this report.
 
 If the Monday calls would pass about 1,000 for the day, send the day picture you already have, fetch the older posts and mentions, and stop the liker lists when the cap is close. Tell the owner which older posts were left out.
+
+### Monday update check
+
+Create this routine for every owner after the trial, when they pick a daily report, a weekly report, or on-request only. It is its own routine. On-request owners get this check and no report routine. Daily owners do not also get the Monday report routine. Weekly owners get both the Monday report and this check.
+
+Mondays at 9:00 in the owner's timezone, or UTC if you don't know it. It does not fetch X. If a report routine is also running that morning, send the report first, then run this.
+
+Run it with community mode off, and run it when community mode is on. Do not skip it because they have not joined. Do not use `community.py plan` to decide. That plan leaves `fetch_versions` false when community mode is off. This routine uses `version.py --plan`, which always fetches the version file and never fetches the global list.
+
+1. Run the bridge under Upgrading if this session has not already.
+2. Do not `git pull` yet.
+3. Run `python3 version.py --plan --repo . --config config.json`. Download `versions_url` to a temp file. Do not commit it. `fetch_global` is false. Do not open the global URL.
+4. Run:
+
+```bash
+python3 version.py --check --latest <temp file> --state <state path> --now <T>
+```
+
+`<T>` is the current UTC time. On any UTC day other than Monday the command returns `reason` `not Monday` and does not compare versions. Stop. Do not pull and do not save the global list. If they ask to check on another day, add `--force`. Still ask before pulling. Do not save the global list on that extra check.
+
+5. If `ask` is true, send `message` as one yes/no card. It names the version and a 1–3 line summary. Do not `git pull` yet.
+6. If they say no:
+
+```bash
+python3 version.py --decide no --version <remote_version> --state <state path> --now <T>
+```
+
+Stay on the current version. Ask again next week. Do not pull.
+7. If they say yes:
+
+```bash
+python3 version.py --decide yes --version <remote_version> --state <state path>
+```
+
+`executed` is false. `pull` is true only so you know they agreed. You run the `steps` yourself. `git pull --ff-only` only. Run `python3 -m pip install -r requirements.txt` only when a step says to, which is when `requirements.txt` changed. Keep the `local_version` from the check and pass it as `<old>`. Pass `remote_version` as `<new>`.
+
+```bash
+python3 version.py --notes <old> <new>
+```
+
+Send those bullets. That is the release note, 3 to 5 short lines. Then:
+
+```bash
+python3 version.py --ack --state <state path>
+```
+
+so the bridge does not show the same note again. Keep `config.json`, `data/`, the good neighbours file, `state.json`, `community.json`, and `global_neighbours.neighbours`.
+8. If `ask` is false, do not pull and do not send a card.
+9. If community mode is on, save the global list with the community skill, including when there was no new version. If community mode is off, do not download the global file.
 
 ## Good neighbours
 
@@ -331,7 +401,7 @@ After a daily report and a fresh on-demand report, the script lists up to five p
 
 ## Community and sharing
 
-Community mode, the Sunday reminder, the Monday version check, and the picture-tag line are in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md). Sharing a list is in [skills/x-neighbours-share/SKILL.md](../x-neighbours-share/SKILL.md). Both stay off until `community.json` says they joined. Recommendations are not follows. You never post the picture or the proof code.
+Community mode, the Sunday reminder, the Monday global-list save, and the picture-tag line are in [skills/x-neighbours-community/SKILL.md](../x-neighbours-community/SKILL.md). Sharing a list is in [skills/x-neighbours-share/SKILL.md](../x-neighbours-share/SKILL.md). Both stay off until `community.json` says they joined. The Monday update check does not. Recommendations are not follows. You never post the picture or the proof code.
 
 ## When they just say hello
 

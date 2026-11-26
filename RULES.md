@@ -50,4 +50,4 @@ The one exception is the founding waiver in [`global/build.json`](global/build.j
 
 ## Releases
 
-`versions/latest.json` changes on Monday (UTC) only. A mid-week rebuild of the global list does not bump it. Community bots compare that file with the local `VERSION` once a week and ask before upgrading. They also save a local copy of the global list on that check. Individual bots do neither.
+`versions/latest.json` changes on Monday (UTC) only. A mid-week rebuild of the global list does not bump it. Every bot compares that file with the local `VERSION` once a week and asks before upgrading. Community bots also save a local copy of the global list on that Monday. Individual bots do not download the list.

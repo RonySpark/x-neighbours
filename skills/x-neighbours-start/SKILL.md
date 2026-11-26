@@ -10,6 +10,6 @@ description: >-
 
 The first report is [skills/x-neighbours/FIRST_RUN.md](../x-neighbours/FIRST_RUN.md). Read that file and follow it. Do not read the full [SKILL.md](../x-neighbours/SKILL.md) to produce it. You run it yourself. Do not hand it to a subagent.
 
-The first report is a Page: the five-post report plus the short intro. The title is `First report`. The chat gets a short headline and the Page link. Do not send a good-neighbours card. Do not offer community mode or a share. Those wait until after the owner picks a daily report, a weekly report, or on-request only, with or after their first regular report.
+The first report is a Page: the five-post report plus the short intro. The title is `First report`. The chat gets a short headline and the Page link. Do not send a good-neighbours card. Do not offer community mode or a share. Those wait until after the owner picks a daily report, a weekly report, or on-request only, with or after their first regular report. Whichever they pick, also create the Monday update check. On-request still gets that check and no report routine.
 
 The full runbook is for those later reports.

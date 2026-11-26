@@ -55,8 +55,8 @@ Do not send a good-neighbours card. `add_question` is absent on the first report
 
 10. Then ask what comes next, with `next_steps` from the script. One question. The options are Daily report, Weekly report, and Only when I ask.
 
-- **Daily report.** Every day at 9:00 in their timezone, or UTC if you don't know it. Last 24 hours. Read the “Every day” steps in [SKILL.md](SKILL.md) and create that routine. Do not also create the Monday routine.
-- **Weekly report.** Mondays at 9:00. Last 7 days. Read the Monday steps in [SKILL.md](SKILL.md) and create that routine only.
-- **Only when I ask.** Create no routine.
+- **Daily report.** Every day at 9:00 in their timezone, or UTC if you don't know it. Last 24 hours. Read the “Every day” steps in [SKILL.md](SKILL.md) and create that routine. Do not also create the Monday report routine. Do create the Monday update check.
+- **Weekly report.** Mondays at 9:00. Last 7 days. Read the Monday report steps in [SKILL.md](SKILL.md) and create that routine. Also create the Monday update check.
+- **Only when I ask.** Create no report routine. Do create the Monday update check.
 
-Do not create both. Followers and following load on the first regular report, if those files are still missing. That same report is the first time you may send the ⭐ Add card, when `add_question` is present. Offer community mode once with or after that first regular report, using the community skill. Not before.
+Do not create both report routines. Every choice still gets the Monday update check. Followers and following load on the first regular report, if those files are still missing. That same report is the first time you may send the ⭐ Add card, when `add_question` is present. Offer community mode once with or after that first regular report, using the community skill. Not before.

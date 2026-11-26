@@ -8,6 +8,7 @@ python3 version.py
 
 ## Unreleased
 
+- Every bot checks for an update on Monday and asks before upgrading. There is no daily `git pull`. The check runs with community mode off. After a yes, the bot shows the short release notes for the versions it crossed. Those notes live in `release_notes` on the version file. `python3 version.py --notes` prints them. A bot that arrives from an older daily pull shows the notes once, drops that daily pull, and adds the Monday check.
 - The first report is a trial. It uses the `trial_post_count` latest original posts and quotes (default 5), stays around 15 X reads, and does not fetch followers or following. The header is `Trial report`, with a short intro and no good-neighbours card, community opt-in, or share offer. Those wait until the first regular report. 👤? is hidden until a following list is loaded. Before each report the bot says how long it should take and that the owner need not wait. The steps are in [`skills/x-neighbours/FIRST_RUN.md`](skills/x-neighbours/FIRST_RUN.md).
 - Likers are fetched only for the owner's original posts and quotes. Replies are skipped even when they have likes. The report still builds when those liker files are absent.
 - Reply counts are first-level only. A reply counts when it replies directly to an owner post or quote. After the owner replies in a thread, later replies further down that thread do not count, including unanswered replies, the picture score, and the share check that replies plus quotes are at least 2.

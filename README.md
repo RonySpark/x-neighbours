@@ -71,24 +71,25 @@ What changed is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Upgrading an installed bot
 
-The clone and `config.json` stay where they are. The good neighbours list and the report clock stay in the bot store. Nothing pulls on a schedule.
+The clone and `config.json` stay where they are. The good neighbours list and the report clock stay in the bot store. Nothing pulls on a daily schedule. Every bot, community mode on or off, has a Monday update check. It asks before `git pull --ff-only`. On a no, it asks again next week. User data stays in place.
 
-Individual mode does not check `versions/` and does not download the global list. When the owner asks to update, use the steps below. Community mode asks first, on the Monday check, and runs these steps only after the owner says yes.
+A bot that arrives from an older daily pull shows the release notes once, removes that daily pull, and adds the Monday check. The steps are in [skills/x-neighbours/SKILL.md](skills/x-neighbours/SKILL.md).
+
+When the owner asks to update now:
 
 1. From the clone, run `python3 version.py` and keep the line.
 2. `git pull --ff-only`. When `requirements.txt` changed, run `python3 -m pip install -r requirements.txt`. Leave `config.json` and `data/` uncommitted.
-3. Run `python3 version.py` again. When the line changed, read [CHANGELOG.md](CHANGELOG.md).
+3. Run `python3 version.py` again. When the line changed, run `python3 version.py --notes` for the old and new versions and read [CHANGELOG.md](CHANGELOG.md).
 4. Leave `good_neighbours.json`, `state.json`, `community.json`, and `global_neighbours.neighbours` in the bot store. The next report uses the updated scripts. Connect X again only when the X tools are missing.
 
 ## Community mode
 
-Community mode is off by default. An individual bot keeps the local reports and the picture. It does not check for a new version, does not download recommendations, and does not open a share pull request.
+Community mode is off by default. An individual bot keeps the local reports and the picture. It does not download recommendations and does not open a share pull request. It still runs the Monday update check.
 
 An owner who joins gets:
 
 - a Sunday reminder, in their report timezone, that they can share when 7 days have passed, and that a feature release may land on Monday
-- a Monday check of `versions/latest.json` against the local `VERSION`. If the GitHub version is newer, the bot asks before `git pull`. It never upgrades in the background
-- a local copy of `global/neighbours.global.neighbours`, saved on that Monday check as `global_neighbours.neighbours` in the bot store
+- a local copy of `global/neighbours.global.neighbours`, saved on Monday as `global_neighbours.neighbours` in the bot store. The version check itself is not part of joining. Every bot already asks before `git pull` and never upgrades in the background
 - the option to share an eligible list, described in [RULES.md](RULES.md)
 - a reminder, when they post the picture, to include @SkyXFunNext so it can be reposted. If that is already the posting account, the reminder is skipped
 
@@ -110,7 +111,7 @@ The global file is empty until submissions arrive. One path, set in `global/buil
 
 The Action “Validate share submissions” checks shape, size, the 7-day gap, eligibility math, self-listing, and notes. [Neighbour Dog](skills/neighbour-dog/SKILL.md) is a separate reviewer bot with its own GitHub account. It merges a clean share, rejects a clear failure, and flags borderline cases (a first-time owner, a spike, a possible boost ring, a new account) with the label `needs-maintainer`. It does not edit the global file. A rebuild Action writes `global/neighbours.global.neighbours` after merges. That rebuild can happen any day and does not change `versions/latest.json`.
 
-`versions/latest.json` moves only on a Monday release. The maintainer runs the “Monday release” workflow, which refuses any other UTC weekday. It reads the number from `VERSION`, writes `versions/latest.json` and `versions/<version>.json`, tags, and opens a GitHub Release. The bot’s Monday message is the announcement owners see. There is no mailing list.
+`versions/latest.json` moves only on a Monday release. The maintainer runs the “Monday release” workflow, which refuses any other UTC weekday. It reads the number from `VERSION`, writes `versions/latest.json` and `versions/<version>.json`, tags, and opens a GitHub Release. `release_notes` on that file is what the bot shows: up to three lines when it asks, and the full list after the owner says yes. There is no mailing list.
 
 ### What the maintainer configures
 
@@ -296,7 +297,7 @@ GitHub Actions runs `python3 -m unittest discover -s tests -v` and this offline 
 |---|---|
 | `x_neighbours.py` | Reports and pictures. `--version` prints the line in `VERSION` |
 | `VERSION` | The only copy of the version number |
-| `version.py` | Read that number. Code calls `version.version()` |
+| `version.py` | Read that number. The Monday check, the release notes, and the upgrade bridge |
 | `CHANGELOG.md` | What changed, for anyone upgrading |
 | `good_neighbours.py` | Add, remove, or list the personal good neighbours file |
 | `report_state.py` | Read or update the freshness clock in the bot store |
@@ -309,14 +310,14 @@ GitHub Actions runs `python3 -m unittest discover -s tests -v` and this offline 
 | `skills/x-neighbours/SKILL.md` | Runbook for the bot |
 | `BOT.md` | Pointer to that runbook |
 | `skills/x-neighbours-maintain/SKILL.md` | How a contributor's bot changes this repo |
-| `skills/x-neighbours-community/SKILL.md` | Opt-in community mode, Sunday reminder, Monday check |
+| `skills/x-neighbours-community/SKILL.md` | Opt-in community mode, Sunday reminder, Monday global-list save |
 | `skills/x-neighbours-share/SKILL.md` | Share an eligible list |
 | `skills/neighbour-dog/SKILL.md` | Review and merge share pull requests |
 | `RULES.md` | Eligibility and share rules |
 | `rules.py`, `rules.json` | The same rules, for the checker |
 | `share_submission.py` | Build and validate a `.neighbours` file |
 | `global_build.py` | Rebuild the global list. Does not touch `versions/` |
-| `community.py` | Join, leave, reminders, version check, local save |
+| `community.py` | Join, leave, reminders, and the local global-list save |
 | `neighbour_dog.py` | Merge, reject, or flag decision |
 | `versions_release.py` | Write `versions/latest.json` on Monday only |
 | `global/build.json` | Two-recommendation rule and the one founding waiver path |

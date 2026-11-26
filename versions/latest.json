@@ -5,5 +5,12 @@
   "repo": "https://github.com/Skybatan/x-neighbours",
   "global_path": "global/neighbours.global.neighbours",
   "source_commit": "",
-  "changelog": "First community release: share lists, global recommendations, and Neighbour Dog. Tentative."
+  "changelog": "First community release: share lists, global recommendations, and Neighbour Dog. Tentative.",
+  "release_notes": [
+    "The first report is a short trial of your 5 latest posts and takes about a minute.",
+    "Every report says how long it should take and notifies you when it is ready.",
+    "Only a direct reply to your post counts, and likes on your own replies are not fetched.",
+    "Community sharing stays off until you opt in.",
+    "A Monday check asks before any upgrade, and it never upgrades on its own."
+  ]
 }

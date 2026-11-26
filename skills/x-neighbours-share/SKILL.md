@@ -79,7 +79,7 @@ python3 share_submission.py finalize --draft <store>/share-draft.neighbours --pr
 python3 share_submission.py validate-file <store>/share-draft.neighbours --repo .
 ```
 
-`finalize` prints `path`. That is `submissions/<user id>/<timestamp>.neighbours`, the file `open-pr` will add. The draft stays in the store. `validate-file` checks the draft and returns `ok` and `errors`. If validation fails, explain the `errors` in plain language and stop. Do not open a pull request.
+`finalize` prints `path`. That is `submissions/<user id>/<timestamp>.neighbours`, the file `open-pr` will add. The draft stays in the store. `validate-file` checks the draft's contents and returns `ok` and `errors`. Where the draft is saved does not matter: a file in the bot store is checked on content. The path rule is enforced only when the file is placed at `submissions/<user id>/<timestamp>.neighbours` for the pull request. If validation fails, explain the `errors` in plain language and stop. Do not open a pull request.
 
 ## Open the pull request
 

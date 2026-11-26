@@ -10,8 +10,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import version as version_mod
 
-SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", ".avatar_cache"}
-SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+# submissions/ and other .neighbours files record generator.template_version,
+# the same string as VERSION. They are share data, not a second source copy.
+SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", ".avatar_cache", "submissions"}
+SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".neighbours"}
 
 
 def read(path):
